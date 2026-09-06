@@ -46,6 +46,8 @@ apps/
 │        ├─ timeline/
 │        └─ review/
 └─ server/
+   ├─ scripts/
+   │  └─ siglip_classify.py
    └─ src/
       ├─ photo/
       ├─ place/
@@ -54,7 +56,7 @@ apps/
 data/                 # 로컬 전용, Git 제외
 ```
 
-각 앱은 feature-based structure를 사용한다.
+각 앱은 feature-based structure를 사용한다. SigLIP2 inference만 작은 Python script로 분리하고, 별도 Python 서버는 두지 않는다.
 
 ## 데이터 모델
 
@@ -159,10 +161,40 @@ EXIF는 `exifr`로 읽는다. Windows에서 `sharp` 기본 바이너리가 HEIC�
 
 아직 raw photo 기준이다. POI와 Visit이 생기기 전에는 사진 좌표를 경로로 연결하지 않는다.
 
+### Step 4 — SigLIP2 분류
+
+`google/siglip2-base-patch16-224`의 zero-shot image classification을 사용한다.
+
+분류 category:
+
+```text
+food
+restaurant
+landmark
+accommodation
+transit
+nature
+street
+people
+screenshot
+other
+```
+
+- 별도 학습 없음
+- `Photo.category`가 `NULL`인 사진만 분류
+- 선택 날짜 기준 최대 200장씩 실행
+- NestJS가 Python subprocess를 한 번 실행하고 batch 전체를 처리
+- top category만 DB에 저장
+- score는 실행 결과로만 반환하고 저장하지 않음
+- Day Timeline에서 category 확인 가능
+
+첫 실행에는 Hugging Face에서 모델 파일을 내려받는다. 이후에는 로컬 cache를 사용한다.
+
 API:
 
 ```text
 POST /photos/import
+POST /photos/classify
 GET  /photos
 GET  /photos?date=YYYY-MM-DD
 GET  /photos/dates
@@ -177,16 +209,38 @@ GET  /photos/:id/preview
 }
 ```
 
+`POST /photos/classify` 예시:
+
+```json
+{
+  "date": "2025-05-17",
+  "limit": 200
+}
+```
+
 ## 로컬 실행
 
 요구사항:
 
 - Node.js 22+
 - pnpm 12+
+- Python 3.11+
 - Google Maps JavaScript API key
+
+Node 의존성:
 
 ```bash
 pnpm install
+```
+
+Vision용 Python 환경:
+
+```bash
+cd apps/server
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements-vision.txt
+cd ../..
 ```
 
 환경파일:
@@ -196,14 +250,26 @@ cp apps/server/.env.example apps/server/.env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
+Windows에서는 환경파일을 직접 복사해도 된다.
+
+`apps/server/.env`:
+
+```text
+PORT=4000
+DATABASE_PATH=../../data/michikusa.db
+PHOTO_DATA_PATH=../../data/photos
+PYTHON_PATH=.venv\Scripts\python.exe
+SIGLIP_MODEL=google/siglip2-base-patch16-224
+```
+
+Python venv를 활성화한 상태에서 실행한다면 `PYTHON_PATH=python` 그대로 사용해도 된다.
+
 `apps/web/.env.local`:
 
 ```text
 NEXT_PUBLIC_API_URL=http://localhost:4000
 NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=...
 ```
-
-Windows에서는 환경파일을 직접 복사해도 된다.
 
 ```bash
 pnpm dev
@@ -223,12 +289,11 @@ data/
 
 ## 다음 구현 순서
 
-1. **SigLIP2** — 장소와 관련된 사진 분류
-2. **POI Resolution** — Google Places 후보 조회
-3. **Visit** — 같은 장소의 사진 병합
-4. **일별 경로** — Visit 좌표를 시간순 직선 연결
-5. **Review UI** — 애매한 POI만 직접 확인
-6. **Missing GPS** — 앞뒤 사진을 이용한 위치 보정
+1. **POI Resolution** — 장소 관련 사진의 Google Places 후보 조회
+2. **Visit** — 같은 장소의 사진 병합
+3. **일별 경로** — Visit 좌표를 시간순 직선 연결
+4. **Review UI** — 애매한 POI만 직접 확인
+5. **Missing GPS** — 앞뒤 사진을 이용한 위치 보정
 
 ## 향후 아이디어
 
