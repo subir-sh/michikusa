@@ -1,9 +1,14 @@
+'use client';
+
+import { useState } from 'react';
 import { ImportPanel } from '../features/import/import-panel';
 import { MapPanel } from '../features/map/map-panel';
 import { ReviewPanel } from '../features/review/review-panel';
 import { TimelinePanel } from '../features/timeline/timeline-panel';
 
 export default function Home() {
+  const [selectedDate, setSelectedDate] = useState('');
+
   return (
     <main className="page">
       <header className="header">
@@ -15,10 +20,13 @@ export default function Home() {
       </header>
 
       <section className="workspace">
-        <MapPanel />
+        <MapPanel
+          selectedDate={selectedDate}
+          onSelectedDateChange={setSelectedDate}
+        />
         <aside className="sidebar">
           <ImportPanel />
-          <TimelinePanel />
+          <TimelinePanel selectedDate={selectedDate} />
           <ReviewPanel />
         </aside>
       </section>
