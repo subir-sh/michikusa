@@ -6,6 +6,7 @@ interface ReviewPanelProps {
   selectedPhotoId: number | null;
   data: PlaceCandidatesResult | null;
   loading: boolean;
+  confirming: boolean;
   error: string | null;
 }
 
@@ -13,6 +14,7 @@ export function ReviewPanel({
   selectedPhotoId,
   data,
   loading,
+  confirming,
   error,
 }: ReviewPanelProps) {
   return (
@@ -24,6 +26,7 @@ export function ReviewPanel({
       )}
 
       {selectedPhotoId !== null && loading && <p>Google Places 조회 중…</p>}
+      {selectedPhotoId !== null && confirming && <p>Place / Visit 저장 중…</p>}
 
       {selectedPhotoId !== null && error && (
         <p className="import-error">{error}</p>
@@ -38,7 +41,7 @@ export function ReviewPanel({
             <>
               <strong>후보 {data.candidates.length}개</strong>
               <p>탐색 반경 {data.radius}m</p>
-              <p>후보 이름과 주소는 Google Map의 주황색 마커를 눌러 확인한다.</p>
+              <p>지도에서 주황색 후보를 누르고 `이 장소로 확정`을 선택한다.</p>
             </>
           ) : (
             <p>{data.reason ?? '이 사진은 현재 POI 조회 대상이 아니다.'}</p>
