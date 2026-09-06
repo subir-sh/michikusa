@@ -179,6 +179,16 @@ h1 {
   font-size: 12px;
 }
 
+.map-confirm-button {
+  width: 100%;
+  min-height: 34px;
+  margin-top: 10px;
+  border-color: #d1d5db;
+  background: #fff;
+  color: #111827;
+  font-size: 12px;
+}
+
 .import-form {
   display: grid;
   gap: 8px;
@@ -278,6 +288,10 @@ h1 {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.visit-badge {
+  font-weight: 700;
 }
 
 .poi-button {
