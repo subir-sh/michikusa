@@ -1,38 +1,39 @@
 # Michikusa
 
-A local-first personal archive for revisiting past places through photos, maps, and daily timelines.
+사진을 기반으로 과거에 방문한 장소를 복원하고, 지도와 시간순 경로로 다시 탐색하는 개인용 아카이브.
 
-The project is intentionally small: it runs on one PC, stores only the data it needs, and avoids infrastructure or abstractions that are not required yet.
+추천이나 SNS가 목적이 아니라 **언제 어디서 무엇을 했는지 오래 보존하고 다시 보는 것**이 목적이다.
 
-## Goal
+## 핵심 경험
 
-Given a large photo library:
+사진을 대량으로 가져오면:
 
-1. Read capture time and GPS metadata.
-2. Convert photos to lightweight WebP previews.
-3. Detect photos that are useful for identifying places.
-4. Match them with nearby POIs.
-5. Group photos from the same place into a visit.
-6. Show visits on a map and connect each day's POIs with simple straight lines.
+1. 촬영 시간과 GPS를 읽는다.
+2. 웹용 WebP preview를 만든다.
+3. 장소와 관련된 사진을 분류한다.
+4. 주변 POI 후보와 연결한다.
+5. 같은 장소의 사진을 하나의 Visit으로 묶는다.
+6. 날짜별 POI를 시간순으로 직선 연결한다.
+7. 웹의 큰 지도와 타임라인에서 과거 기록을 탐색한다.
 
-This is an archive and recollection tool, not a recommendation service or social network.
+실제 이동 경로 복원은 하지 않는다.
 
-## Stack
+## 기술 스택
 
 - Monorepo: pnpm workspace
 - Web: Next.js
 - Server: NestJS
 - ORM: TypeORM
-- Database: SQLite via better-sqlite3
+- Database: SQLite (`better-sqlite3`)
 - Storage: local filesystem
 - Vision: SigLIP2
 - Map: Google Maps
-- POI resolver: Google Places API
-- AI fallback: Codex GUI, only for ambiguous cases
+- POI: Google Places API
+- AI fallback: Codex GUI
 
-Everything runs locally. Personal photos, the SQLite database, review batches, and secrets are excluded from Git.
+외부 배포를 전제로 하지 않는다. 서버, DB, 사진은 모두 로컬 PC에서 실행·보관한다.
 
-## Repository Structure
+## 구조
 
 ```text
 apps/
@@ -40,24 +41,24 @@ apps/
 │  └─ src/
 │     ├─ app/
 │     └─ features/
+│        ├─ import/
 │        ├─ map/
 │        ├─ timeline/
 │        └─ review/
-│
 └─ server/
    └─ src/
       ├─ photo/
       ├─ place/
       └─ visit/
 
-data/                # local only, ignored by Git
+data/                 # 로컬 전용, Git 제외
 ```
 
-Both applications use feature-based structure.
+각 앱은 feature-based structure를 사용한다.
 
-## Data Model
+## 데이터 모델
 
-Only three entities are defined initially.
+초기에는 세 entity만 사용한다.
 
 ### Photo
 
@@ -93,73 +94,88 @@ visitedAt
 confirmed
 ```
 
-Relations:
-
 ```text
 Place 1 ── N Visit 1 ── N Photo
 ```
 
-Day, week, month, year, and trip are derived concepts and are not database entities unless they later need to be.
+Day, Week, Month, Year, Trip은 필요해지기 전까지 별도 entity로 만들지 않는다.
 
-## Processing Flow
+## 사진 처리 흐름
 
 ```text
-Photo
-  ↓
-EXIF: capturedAt + GPS
-  ↓
-WebP conversion + duplicate hash check
-  ↓
-SigLIP2 classification
-  ↓
-GPS available? ── no ──> infer from nearby photos when possible
-  ↓
-Google Places nearby candidates
-  ↓
-category + distance based candidate selection
-  ↓
+사진
+ ↓
+EXIF: capturedAt / GPS
+ ↓
+중복 hash 확인
+ ↓
+WebP preview 생성
+ ↓
+SigLIP2 분류
+ ↓
+GPS 없는 경우만 위치 추정
+ ↓
+Google Places 주변 후보
+ ↓
 Place / Visit
-  ↓
-Map + daily timeline
+ ↓
+지도 + 일별 타임라인
 ```
 
-There is no processing state machine. Missing values are enough to determine what still needs work.
+별도 processing state machine은 두지 않는다.
 
-### Ambiguous POIs
+### HEIC
 
-Cases that cannot be resolved confidently can be exported to an ignored `ai-review/` directory with the image and a small metadata JSON file. Codex GUI can inspect the batch and write structured results back.
+EXIF는 `exifr`로 읽는다. Windows에서 `sharp` 기본 바이너리가 HEIC를 직접 읽지 못하는 경우가 있으므로 preview 생성은 `heic-convert → sharp → WebP`로 처리한다.
 
-## UI
+## 현재 구현
 
-The initial web UI has three areas:
+### Step 1 — 로컬 사진 가져오기
 
-- **Map** — POIs, date selection, daily straight-line route, related photos.
-- **Timeline** — visits for the selected day in chronological order.
-- **Review** — unresolved or unconfirmed POIs.
+구현 완료:
 
-Day and week are the main timeline views. Month and year views should favor clustering rather than drawing dense routes.
+- 로컬 폴더 재귀 스캔
+- JPEG / PNG / WebP / AVIF / HEIC / HEIF 지원
+- SHA-256 기반 중복 제거
+- 촬영 시간 / GPS 추출
+- 최대 1600px WebP preview 생성
+- SQLite 저장
+- 웹에서 로컬 폴더 경로를 입력해 import
 
-## Local Development
+API:
 
-Requirements:
+```text
+POST /photos/import
+GET  /photos
+```
+
+`POST /photos/import` 예시:
+
+```json
+{
+  "directory": "D:\\Photos\\Japan"
+}
+```
+
+## 로컬 실행
+
+요구사항:
 
 - Node.js 22+
 - pnpm 12+
-
-Install dependencies:
 
 ```bash
 pnpm install
 ```
 
-Copy the example environment files:
+환경파일:
 
 ```bash
 cp apps/server/.env.example apps/server/.env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-Run both apps:
+Windows에서는 파일을 직접 복사해도 된다.
 
 ```bash
 pnpm dev
@@ -169,36 +185,40 @@ pnpm dev
 - Server: `http://localhost:4000`
 - Health: `http://localhost:4000/health`
 
-The SQLite database is created automatically under `data/michikusa.db` by default.
+기본 데이터 경로:
 
-## MVP
+```text
+data/
+├─ michikusa.db
+└─ photos/
+```
 
-1. Bulk photo import
-2. EXIF extraction and WebP generation
-3. Raw GPS map
-4. Day filtering and straight-line route
-5. SigLIP2 classification
-6. Google Places candidates
-7. Place / Visit creation
-8. Review UI
-9. Missing-GPS inference
+## 다음 구현 순서
 
-## Future Ideas
+1. **Raw GPS Map** — 가져온 사진을 지도에 표시
+2. **Day Timeline** — 날짜 필터와 시간순 직선 경로
+3. **SigLIP2** — 장소 관련 사진 분류
+4. **POI Resolution** — Google Places 후보 조회
+5. **Visit** — 같은 장소의 사진 병합
+6. **Review UI** — 애매한 POI만 직접 확인
+7. **Missing GPS** — 앞뒤 사진을 이용한 위치 보정
 
-Only add these when actual usage justifies them:
+## 향후 아이디어
 
-- Expo iPhone sync client if USB import becomes annoying
-- Semantic photo search using SigLIP embeddings
-- Better POI resolution using visual clues or OCR
+실제로 필요해졌을 때만 추가한다.
+
+- USB import가 불편하면 Expo 기반 iPhone 증분 sync
+- SigLIP embedding 기반 semantic photo search
+- 애매한 POI를 Codex GUI batch로 추가 판정
+- 필요 시 OCR / 별도 VLM
 - Trip grouping
-- Notes on places or visits
-- Revisit history for the same place
-- Random past-place / past-day rediscovery
-- Region density and long-term map exploration
-- Backup / export of DB and previews
+- Place / Visit 메모
+- 같은 장소 재방문 기록
+- 지역별 방문 밀도 / 랜덤 과거 장소 다시 보기
+- DB + preview 백업 / export
 
-## Principle
+## 원칙
 
-Keep the implementation as small as possible.
+**가능한 한 적은 entity, field, dependency로 구현한다.**
 
-Do not add an entity, field, dependency, state, service, or abstraction until the current product actually needs it.
+실제로 필요해지기 전에는 새로운 abstraction, state, service를 추가하지 않는다.
