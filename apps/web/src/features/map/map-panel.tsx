@@ -22,6 +22,16 @@ interface PhotoDateCount {
   gpsCount: number;
 }
 
+interface DayVisit {
+  id: number;
+  placeId: number;
+  visitedAt: string;
+  latitude: number;
+  longitude: number;
+  category: string | null;
+  photoCount: number;
+}
+
 interface MapPanelProps {
   selectedDate: string;
   onSelectedDateChange: (date: string) => void;
@@ -52,6 +62,7 @@ export function MapPanel({
   const mapElement = useRef<HTMLDivElement>(null);
   const [dates, setDates] = useState<PhotoDateCount[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
+  const [visits, setVisits] = useState<DayVisit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,31 +93,56 @@ export function MapPanel({
       return;
     }
 
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(
-        `${API_URL}/photos?date=${encodeURIComponent(date)}`,
-      );
-      if (!response.ok) throw new Error(await response.text());
-      setPhotos((await response.json()) as Photo[]);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setLoading(false);
-    }
+    const response = await fetch(
+      `${API_URL}/photos?date=${encodeURIComponent(date)}`,
+    );
+    if (!response.ok) throw new Error(await response.text());
+    setPhotos((await response.json()) as Photo[]);
   }, []);
+
+  const loadVisits = useCallback(async (date: string) => {
+    if (!date) {
+      setVisits([]);
+      return;
+    }
+
+    const response = await fetch(
+      `${API_URL}/visits?date=${encodeURIComponent(date)}`,
+    );
+    if (!response.ok) throw new Error(await response.text());
+    setVisits((await response.json()) as DayVisit[]);
+  }, []);
+
+  const loadDay = useCallback(
+    async (date: string) => {
+      if (!date) {
+        setPhotos([]);
+        setVisits([]);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+      try {
+        await Promise.all([loadPhotos(date), loadVisits(date)]);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loadPhotos, loadVisits],
+  );
 
   const refresh = useCallback(async () => {
     setError(null);
     try {
       await loadDates();
-      if (selectedDate) await loadPhotos(selectedDate);
+      if (selectedDate) await loadDay(selectedDate);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [loadDates, loadPhotos, selectedDate]);
+  }, [loadDates, loadDay, selectedDate]);
 
   useEffect(() => {
     void loadDates().catch((cause) => {
@@ -115,8 +151,8 @@ export function MapPanel({
   }, [loadDates]);
 
   useEffect(() => {
-    void loadPhotos(selectedDate);
-  }, [loadPhotos, selectedDate]);
+    void loadDay(selectedDate);
+  }, [loadDay, selectedDate]);
 
   useEffect(() => {
     const handleImported = () => void refresh();
@@ -167,6 +203,33 @@ export function MapPanel({
         map.data.add(feature);
       }
 
+      if (visits.length >= 2) {
+        const route = new google.maps.Data.Feature({
+          id: 'visit-route',
+          geometry: new google.maps.Data.LineString(
+            visits.map(
+              (visit) =>
+                new google.maps.LatLng(visit.latitude, visit.longitude),
+            ),
+          ),
+        });
+        route.setProperty('kind', 'route');
+        map.data.add(route);
+      }
+
+      for (const visit of visits) {
+        const position = { lat: visit.latitude, lng: visit.longitude };
+        allBounds.extend(position);
+
+        const feature = new google.maps.Data.Feature({
+          id: `visit:${visit.id}`,
+          geometry: new google.maps.Data.Point(position),
+        });
+        feature.setProperty('kind', 'visit');
+        feature.setProperty('visit', visit);
+        map.data.add(feature);
+      }
+
       for (const candidate of placeCandidates) {
         const feature = new google.maps.Data.Feature({
           id: `candidate:${candidate.placeId}`,
@@ -184,6 +247,27 @@ export function MapPanel({
         const kind = feature.getProperty('kind') as string;
         const selected = feature.getProperty('selected') === true;
 
+        if (kind === 'route') {
+          return {
+            strokeColor: '#111827',
+            strokeOpacity: 0.72,
+            strokeWeight: 3,
+          };
+        }
+
+        if (kind === 'visit') {
+          return {
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 9,
+              fillColor: '#111827',
+              fillOpacity: 0.95,
+              strokeColor: '#ffffff',
+              strokeWeight: 2,
+            },
+          };
+        }
+
         if (kind === 'candidate') {
           return {
             icon: {
@@ -200,17 +284,19 @@ export function MapPanel({
         return {
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
-            scale: selected ? 8 : 6,
+            scale: selected ? 8 : 5,
             fillColor: selected ? '#dc2626' : '#2563eb',
-            fillOpacity: 0.9,
+            fillOpacity: selected ? 0.95 : 0.55,
             strokeColor: '#ffffff',
-            strokeWeight: selected ? 2 : 1.5,
+            strokeWeight: selected ? 2 : 1,
           },
         };
       });
 
       clickListener = map.data.addListener('click', (event) => {
         const kind = event.feature.getProperty('kind') as string;
+        if (kind === 'route') return;
+
         const content = document.createElement('div');
         content.className = 'map-info';
 
@@ -248,6 +334,18 @@ export function MapPanel({
             }
           });
           content.append(confirmButton);
+        } else if (kind === 'visit') {
+          const visit = event.feature.getProperty('visit') as DayVisit;
+          const title = document.createElement('strong');
+          title.textContent = `Visit #${visit.id}`;
+          const detail = document.createElement('p');
+          const time = new Date(visit.visitedAt).toLocaleTimeString('ko-KR', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          });
+          detail.textContent = `${time} · ${visit.category ?? 'place'} · 사진 ${visit.photoCount}장`;
+          content.append(title, detail);
         } else {
           const photo = event.feature.getProperty('photo') as Photo;
           const image = document.createElement('img');
@@ -279,7 +377,7 @@ export function MapPanel({
           focusBounds.extend({ lat: candidate.latitude, lng: candidate.longitude });
         }
         map.fitBounds(focusBounds, 72);
-      } else if (gpsPhotos.length === 1) {
+      } else if (gpsPhotos.length === 1 && visits.length === 0) {
         map.setCenter(allBounds.getCenter());
         map.setZoom(16);
       } else {
@@ -295,16 +393,16 @@ export function MapPanel({
       cancelled = true;
       clickListener?.remove();
     };
-  }, [gpsPhotos, onConfirmPlace, placeCandidates, selectedPhotoId]);
+  }, [gpsPhotos, onConfirmPlace, placeCandidates, selectedPhotoId, visits]);
 
   return (
     <section className="panel map-panel">
       <div className="panel-header">
         <div>
-          <h2>Raw GPS Map</h2>
+          <h2>Day Map</h2>
           <p>
             {selectedDate
-              ? `${selectedDate} · GPS ${gpsPhotos.length} / 전체 ${photos.length}${placeCandidates.length > 0 ? ` · POI 후보 ${placeCandidates.length}` : ''}`
+              ? `${selectedDate} · GPS ${gpsPhotos.length}/${photos.length} · Visit ${visits.length}${placeCandidates.length > 0 ? ` · 후보 ${placeCandidates.length}` : ''}`
               : '사진을 가져오면 날짜별로 표시한다.'}
           </p>
         </div>
