@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager } from 'typeorm';
 import { Photo } from '../photo/photo.entity';
 import { Place } from '../place/place.entity';
 import { Visit } from './visit.entity';
@@ -14,11 +13,6 @@ export interface AssignVisitResult {
 
 @Injectable()
 export class VisitService {
-  constructor(
-    @InjectRepository(Visit)
-    private readonly visitRepository: Repository<Visit>,
-  ) {}
-
   async assignPhoto(
     manager: EntityManager,
     place: Place,
