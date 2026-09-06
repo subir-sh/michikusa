@@ -14,7 +14,7 @@
 4. 주변 POI 후보와 연결한다.
 5. 같은 장소의 사진을 하나의 Visit으로 묶는다.
 6. 날짜별 POI를 시간순으로 직선 연결한다.
-7. 웹의 큰 지도와 타임라인에서 과거 기록을 탐색한다.
+7. 웹 지도와 타임라인에서 과거 기록을 탐색한다.
 
 실제 이동 경로 복원은 하지 않는다.
 
@@ -60,8 +60,6 @@ data/                 # 로컬 전용, Git 제외
 
 ## 데이터 모델
 
-초기에는 세 entity만 사용한다.
-
 ### Photo
 
 ```text
@@ -80,12 +78,15 @@ visitId?
 
 ```text
 id
-name
 latitude
 longitude
 category?
-googlePlaceId?
+googlePlaceId
 ```
+
+`Place.latitude / longitude`는 Google Places 좌표가 아니라 **확정에 사용한 사용자 사진의 GPS**다.
+
+Google Places 응답의 이름, 주소, 좌표, types는 SQLite에 영구 저장하지 않는다. `googlePlaceId`만 장기 식별자로 저장한다.
 
 ### Visit
 
@@ -93,7 +94,6 @@ googlePlaceId?
 id
 placeId
 visitedAt
-confirmed
 ```
 
 ```text
@@ -101,8 +101,6 @@ Place 1 ── N Visit 1 ── N Photo
 ```
 
 Day, Week, Month, Year, Trip은 필요해지기 전까지 별도 entity로 만들지 않는다.
-
-현재 `Place` entity는 아직 실제 생성에 사용하지 않는다. Google Places 후보 품질을 먼저 검증한 뒤 persistence 방식을 확정한다.
 
 ## 사진 처리 흐름
 
@@ -117,20 +115,18 @@ WebP preview 생성
  ↓
 SigLIP2 분류
  ↓
-GPS 없는 경우만 위치 추정
- ↓
 Google Places 주변 후보
+ ↓
+사용자가 후보 확정
  ↓
 Place / Visit
  ↓
 지도 + 일별 타임라인
 ```
 
+GPS가 없는 사진의 위치 추정은 아직 구현하지 않았다.
+
 별도 processing state machine은 두지 않는다.
-
-### HEIC
-
-EXIF는 `exifr`로 읽는다. Windows에서 `sharp` 기본 바이너리가 HEIC를 직접 읽지 못하는 경우가 있으므로 preview 생성은 `heic-convert → sharp → WebP`로 처리한다.
 
 ## 현재 구현
 
@@ -144,30 +140,25 @@ EXIF는 `exifr`로 읽는다. Windows에서 `sharp` 기본 바이너리가 HEIC�
 - SQLite 저장
 - 웹에서 로컬 폴더 경로를 입력해 import
 
+HEIC EXIF는 `exifr`로 읽는다. preview는 Windows 호환성을 위해 `heic-convert → sharp → WebP`로 처리한다.
+
 ### Step 2 — Raw GPS Map
 
 - 날짜별 전체 사진 수 / GPS 사진 수 조회
-- 날짜별 사진 조회
 - Google Maps에 raw GPS point 표시
 - point 클릭 시 WebP preview와 촬영 시간 표시
 - GPS 없는 날짜도 선택 가능
-- import 완료 후 지도 데이터 자동 갱신
 
 ### Step 3 — Day Timeline
 
 - 지도와 동일한 날짜 선택 상태 사용
 - 선택 날짜의 모든 사진을 촬영 시간순으로 표시
 - WebP thumbnail 표시
-- GPS 유무와 좌표 표시
-- import 완료 후 타임라인 자동 갱신
-
-아직 raw photo 기준이다. POI와 Visit이 생기기 전에는 사진 좌표를 경로로 연결하지 않는다.
+- GPS 유무 표시
 
 ### Step 4 — SigLIP2 분류
 
 `google/siglip2-base-patch16-224`의 zero-shot image classification을 사용한다.
-
-분류 category:
 
 ```text
 food
@@ -183,36 +174,23 @@ other
 ```
 
 - 별도 학습 없음
-- `Photo.category`가 `NULL`인 사진만 분류
+- `Photo.category IS NULL`인 사진만 분류
 - 선택 날짜 기준 최대 200장씩 실행
-- NestJS가 Python subprocess를 한 번 실행하고 batch 전체를 처리
-- top category만 DB에 저장
-- score는 실행 결과로만 반환하고 저장하지 않음
-- Day Timeline에서 category 확인 가능
-
-첫 실행에는 Hugging Face에서 모델 파일을 내려받는다. 이후에는 로컬 cache를 사용한다.
+- NestJS가 Python subprocess를 한 번 실행하고 batch 전체 처리
+- top category만 DB 저장
+- score는 실행 결과로만 반환
 
 ### Step 5 — POI 후보 조회
-
-GPS와 SigLIP category를 이용해 Google Places Nearby Search (New)의 주변 후보를 조회한다.
 
 대상 category:
 
 ```text
-food
-restaurant
-landmark
-accommodation
-transit
-nature
-street
+food / restaurant / landmark / accommodation / transit / nature / street
 ```
 
 `people`, `screenshot`, `other`는 현재 POI 후보를 조회하지 않는다.
 
-category에 따라 탐색 반경과 Google Place type을 다르게 사용한다.
-
-예:
+초기 탐색 반경:
 
 ```text
 food / restaurant  120m
@@ -228,16 +206,26 @@ street             120m
 - 사진 GPS와의 거리
 - SigLIP category와 Google Place primary type의 일치 여부
 
-후보 이름, 주소, 좌표 등 Google Places 응답 내용은 DB에 저장하지 않는다. 조회 결과는 현재 화면에서만 사용한다.
+후보 데이터는 현재 화면에서만 사용한다.
 
-타임라인에서 `POI 후보`를 누르면:
+### Step 6 — Place 확정 + Visit
 
-1. 서버가 Places API 후보를 조회한다.
-2. 선택 사진은 지도에서 강조된다.
-3. 후보는 지도에 별도 마커로 표시된다.
-4. 후보 마커를 누르면 이름, 주소, type, 거리, score를 확인한다.
+타임라인에서 `POI 후보`를 누른 뒤 지도에서 주황색 후보 마커를 선택한다.
 
-후보 데이터는 Google Map 내부에서 확인한다.
+후보 InfoWindow의 `이 장소로 확정`을 누르면:
+
+1. 서버가 같은 사진의 후보를 다시 조회해 `googlePlaceId`가 실제 후보인지 검증한다.
+2. 같은 `googlePlaceId`의 Place가 없으면 새 Place를 만든다.
+3. Place 좌표는 Google 좌표가 아니라 사진 GPS를 저장한다.
+4. 확정한 Photo에 `visitId`를 연결한다.
+5. 같은 Place의 기존 Visit 중 시간적으로 가까운 것이 있으면 병합한다.
+6. 없으면 새 Visit을 만든다.
+
+현재 Visit 병합 기준은 **같은 Place + 기존 Visit의 사진과 4시간 이내**다.
+
+이 값은 초기값이다. 실제 사진으로 테스트한 뒤 조정한다.
+
+근처 사진을 추측으로 자동 편입하지 않는다. **직접 Place가 확정된 사진만 Visit에 들어간다.**
 
 ## API
 
@@ -248,23 +236,17 @@ GET  /photos
 GET  /photos?date=YYYY-MM-DD
 GET  /photos/dates
 GET  /photos/:id/preview
+
 GET  /places/candidates?photoId=123
+POST /places/confirm
 ```
 
-`POST /photos/import` 예시:
+`POST /places/confirm`:
 
 ```json
 {
-  "directory": "D:\\Photos\\Japan"
-}
-```
-
-`POST /photos/classify` 예시:
-
-```json
-{
-  "date": "2025-05-17",
-  "limit": 200
+  "photoId": 123,
+  "googlePlaceId": "ChIJ..."
 }
 ```
 
@@ -287,7 +269,7 @@ pnpm install
 
 ### 2. Vision용 Python 환경
 
-Windows PowerShell 또는 CMD 기준:
+Windows 기준:
 
 ```bash
 cd apps/server
@@ -301,24 +283,17 @@ SigLIP2 첫 실행에서는 Hugging Face model download가 발생한다.
 
 ### 3. Google Cloud
 
-Google Maps Platform project를 만들고 billing을 연결한 뒤 다음 API를 활성화한다.
+Google Maps Platform project에서 billing을 연결하고 다음 API를 활성화한다.
 
 - Maps JavaScript API
 - Places API (New)
 
-공식 설정 문서:
+가능하면 key를 두 개로 나눈다.
 
-- https://developers.google.com/maps/documentation/javascript/get-api-key
-- https://developers.google.com/maps/documentation/places/web-service/get-api-key
+- Web key: Maps JavaScript API 전용, `localhost` HTTP referrer 제한
+- Server key: Places API (New) 전용, API restriction 적용
 
-로컬 개발에서도 가능하면 key를 두 개로 나눈다.
-
-- Web key: Maps JavaScript API 전용
-- Server key: Places API (New) 전용
-
-Web key는 `localhost` HTTP referrer로 제한하고, Server key는 최소한 API restriction으로 Places API (New)만 허용한다.
-
-Places API는 billing이 필요하므로 Google Cloud에서 quota / budget도 작은 값으로 설정해두는 것을 권장한다.
+Places API는 과금 가능성이 있으므로 quota / budget도 작게 설정해두는 것을 권장한다.
 
 ### 4. 환경파일
 
@@ -339,8 +314,6 @@ PYTHON_PATH=.venv\Scripts\python.exe
 SIGLIP_MODEL=google/siglip2-base-patch16-224
 GOOGLE_PLACES_API_KEY=...
 ```
-
-Python venv를 활성화한 상태에서 실행한다면 `PYTHON_PATH=python`을 사용할 수도 있다.
 
 `apps/web/.env.local`:
 
@@ -367,24 +340,22 @@ data/
 └─ photos/
 ```
 
-## 처음 테스트하는 방법
+## 처음부터 테스트하는 방법
 
-아직 한 번도 실행하지 않은 상태라면 아래 순서대로 확인한다.
+아직 한 번도 실행하지 않았다면 아래 순서대로 확인한다.
 
 ### A. 테스트 사진 준비
 
-처음부터 수만 장을 넣지 않는다.
-
-Windows Photos 앱 등으로 iPhone에서 **100~300장 정도**를 테스트 폴더에 가져온다.
+처음부터 수만 장을 넣지 않는다. iPhone에서 **100~300장 정도**만 Windows 폴더로 가져온다.
 
 가능하면 다음이 섞인 날짜가 좋다.
 
-- 음식 / 식당 사진
+- 음식 / 식당
 - 관광지
 - 역
 - 호텔
 - 거리
-- 사람 사진
+- 사람
 - 스크린샷
 - GPS 없는 사진
 - HEIC
@@ -401,94 +372,118 @@ D:\MichikusaTest\
 2. 사진 가져오기 입력창에 `D:\MichikusaTest` 입력
 3. `가져오기` 실행
 
-확인할 것:
+확인:
 
 - 성공 / 중복 / 실패 수
 - `data/photos/`에 WebP 생성
 - `data/michikusa.db` 생성
-- 같은 폴더를 다시 import하면 대부분 중복 처리
+- 같은 폴더 재import 시 중복 처리
 
 ### C. Raw GPS Map
 
-날짜를 바꾸면서 지도에 사진 위치가 뜨는지 확인한다.
+확인:
 
-확인할 것:
-
-- 날짜별 전체 사진 수
-- GPS 사진 수
-- 사진 marker 위치
+- 날짜별 전체 사진 수 / GPS 사진 수
+- marker 위치
 - marker 클릭 시 preview
 
-GPS가 없는 사진은 지도에 뜨지 않아도 정상이다.
+GPS 없는 사진이 지도에 뜨지 않는 것은 정상이다.
 
 ### D. SigLIP2
 
 Day Timeline에서 `SigLIP2 분류`를 누른다.
 
-첫 실행은 모델 다운로드 때문에 오래 걸릴 수 있다.
-
-확인할 것:
+확인:
 
 - 분류 성공 수
 - CPU / CUDA 표시
-- 음식 사진이 `food` 또는 `restaurant` 근처로 분류되는지
-- 관광지가 `landmark`, 역이 `transit`으로 대체로 들어가는지
-- 사람 / 스크린샷이 장소 category로 과도하게 들어가지 않는지
+- 음식 → `food` / `restaurant`
+- 관광지 → `landmark`
+- 역 → `transit`
+- 사람 / 스크린샷이 장소 category로 과도하게 분류되지 않는지
 
-여기서는 100% 정확도를 목표로 하지 않는다. POI 조회에 쓸 수 있을 정도의 broad category가 나오면 된다.
+100% 정확도가 아니라 POI 후보 생성에 쓸 수 있는 broad category인지 본다.
 
 ### E. POI 후보
 
-GPS가 있고 다음 category 중 하나인 사진에서 `POI 후보`를 누른다.
+GPS가 있고 장소 category인 사진에서 `POI 후보`를 누른다.
 
-```text
-food / restaurant / landmark / accommodation / transit / nature / street
-```
-
-확인할 것:
+확인:
 
 - 선택 사진이 지도에서 강조되는지
-- 주변 후보 marker가 추가되는지
-- marker 클릭 시 실제 장소 이름이 나오는지
-- 실제 방문 장소가 상위 후보에 있는지
-- 거리와 category가 이상하지 않은지
+- 주황색 후보 marker가 추가되는지
+- 실제 방문 장소가 후보에 있는지
+- 실제 장소가 몇 번째 후보인지
+- 탐색 반경이 너무 좁거나 넓은지
 
-초기 품질 평가에서는 특히 아래를 기록한다.
+초기 품질 평가 예:
 
 ```text
-사진 category
-실제 장소
-실제 장소가 후보에 있었는가
-몇 번째 후보였는가
-후보 탐색 반경이 너무 좁거나 넓었는가
+사진 category: restaurant
+실제 장소: ○○라멘
+후보에 있었나: YES
+후보 순위: 2
+거리: 34m
 ```
 
-이 결과를 보고 category별 radius / Google type / ranking score를 조정한다.
+### F. Place / Visit 확정
+
+1. 실제 장소 후보 marker를 누른다.
+2. `이 장소로 확정`을 누른다.
+3. 타임라인에서 해당 사진이 `Visit #n`으로 바뀌는지 확인한다.
+
+그 다음 **같은 장소에서 비슷한 시간에 찍은 다른 사진**도 같은 후보로 확정한다.
+
+확인:
+
+- 같은 Google Place인가
+- 시간 차이가 4시간 이내인가
+- 그렇다면 두 사진의 `Visit #`가 같은가
+
+반대로 같은 장소라도 충분히 시간이 떨어진 사진은 다른 Visit이 되는지 본다.
+
+초기 테스트에서 기록하면 좋은 것:
+
+```text
+실제 장소
+사진 시각
+생성된 Visit ID
+같은 방문이 잘 합쳐졌는가
+4시간 기준이 너무 짧거나 긴가
+```
+
+잘못 확정한 Place를 수정하는 UI는 아직 없다. 초기 테스트에서 실수했거나 처음부터 다시 돌리고 싶다면 서버를 종료한 뒤 `data/michikusa.db`와 `data/photos/`를 지우고 다시 import하면 된다.
 
 ## Google Places 데이터 처리 원칙
 
-Google Places 후보는 resolver로만 사용한다.
+Google Places는 resolver로만 사용한다.
 
-현재 단계에서는 Google Places에서 받은 다음 값들을 SQLite에 저장하지 않는다.
+SQLite에 영구 저장하지 않는 값:
 
 - displayName
 - formattedAddress
 - Google 좌표
 - types
 
-Google Place ID는 Google 정책상 장기 저장이 허용되므로, 실제 Place 확정 단계에서는 `googlePlaceId`를 식별자로 사용할 수 있다.
+영구 저장하는 Google 값:
 
-관련 문서:
+- `googlePlaceId`
+
+Place의 latitude / longitude는 사용자의 사진 GPS이므로 Google Places 응답 데이터가 아니다.
+
+Place ID는 시간이 지나면서 바뀔 수 있으므로 장기간 보존 후에는 refresh가 필요할 수 있다.
+
+공식 문서:
 
 - https://developers.google.com/maps/documentation/places/web-service/policies
 - https://developers.google.com/maps/documentation/places/web-service/place-id
 
 ## 다음 구현 순서
 
-1. **Place 확정 + Visit** — 후보 중 하나를 확정하고 같은 장소의 사진을 Visit으로 묶기
-2. **일별 경로** — Visit 좌표를 시간순 직선 연결
-3. **Review UI** — 자동 확정하기 애매한 후보만 빠르게 확인
-4. **Missing GPS** — 앞뒤 사진을 이용한 위치 보정
+1. **일별 Visit 경로** — Visit 좌표를 시간순 직선 연결
+2. **Review / 수정 UI** — 잘못 확정한 Place를 변경하거나 해제
+3. **Missing GPS** — 앞뒤 사진을 이용한 위치 보정
+4. **자동 확정** — 실제 후보 품질이 확인된 뒤 확실한 케이스만 자동 처리
 
 ## 향후 아이디어
 
