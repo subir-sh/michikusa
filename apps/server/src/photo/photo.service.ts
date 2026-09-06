@@ -33,11 +33,13 @@ interface PhotoMetadata {
 interface PhotoDateRow {
   date: string | null;
   count: number | string;
+  gpsCount: number | string;
 }
 
 export interface PhotoDateCount {
   date: string;
   count: number;
+  gpsCount: number;
 }
 
 export interface ImportResult {
@@ -79,15 +81,21 @@ export class PhotoService {
       .createQueryBuilder('photo')
       .select('date(photo.capturedAt)', 'date')
       .addSelect('COUNT(photo.id)', 'count')
-      .where('photo.latitude IS NOT NULL')
-      .andWhere('photo.longitude IS NOT NULL')
+      .addSelect(
+        'SUM(CASE WHEN photo.latitude IS NOT NULL AND photo.longitude IS NOT NULL THEN 1 ELSE 0 END)',
+        'gpsCount',
+      )
       .groupBy('date(photo.capturedAt)')
       .orderBy('date(photo.capturedAt)', 'DESC')
       .getRawMany<PhotoDateRow>();
 
     return rows
       .filter((row): row is PhotoDateRow & { date: string } => row.date !== null)
-      .map((row) => ({ date: row.date, count: Number(row.count) }));
+      .map((row) => ({
+        date: row.date,
+        count: Number(row.count),
+        gpsCount: Number(row.gpsCount),
+      }));
   }
 
   async getPreviewPath(id: number): Promise<string> {
