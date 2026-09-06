@@ -27,6 +27,7 @@ interface MapPanelProps {
   onSelectedDateChange: (date: string) => void;
   selectedPhotoId: number | null;
   placeCandidates: PlaceCandidate[];
+  onConfirmPlace: (googlePlaceId: string) => Promise<void>;
 }
 
 function configureMaps() {
@@ -46,6 +47,7 @@ export function MapPanel({
   onSelectedDateChange,
   selectedPhotoId,
   placeCandidates,
+  onConfirmPlace,
 }: MapPanelProps) {
   const mapElement = useRef<HTMLDivElement>(null);
   const [dates, setDates] = useState<PhotoDateCount[]>([]);
@@ -118,8 +120,13 @@ export function MapPanel({
 
   useEffect(() => {
     const handleImported = () => void refresh();
+    const handleConfirmed = () => void refresh();
     window.addEventListener('michikusa:photos-imported', handleImported);
-    return () => window.removeEventListener('michikusa:photos-imported', handleImported);
+    window.addEventListener('michikusa:place-confirmed', handleConfirmed);
+    return () => {
+      window.removeEventListener('michikusa:photos-imported', handleImported);
+      window.removeEventListener('michikusa:place-confirmed', handleConfirmed);
+    };
   }, [refresh]);
 
   useEffect(() => {
@@ -224,6 +231,23 @@ export function MapPanel({
             address.textContent = candidate.formattedAddress;
             content.append(address);
           }
+
+          const confirmButton = document.createElement('button');
+          confirmButton.type = 'button';
+          confirmButton.className = 'map-confirm-button';
+          confirmButton.textContent = '이 장소로 확정';
+          confirmButton.addEventListener('click', async () => {
+            confirmButton.disabled = true;
+            confirmButton.textContent = '저장 중…';
+            try {
+              await onConfirmPlace(candidate.placeId);
+              infoWindow.close();
+            } catch {
+              confirmButton.disabled = false;
+              confirmButton.textContent = '다시 시도';
+            }
+          });
+          content.append(confirmButton);
         } else {
           const photo = event.feature.getProperty('photo') as Photo;
           const image = document.createElement('img');
@@ -271,7 +295,7 @@ export function MapPanel({
       cancelled = true;
       clickListener?.remove();
     };
-  }, [gpsPhotos, placeCandidates, selectedPhotoId]);
+  }, [gpsPhotos, onConfirmPlace, placeCandidates, selectedPhotoId]);
 
   return (
     <section className="panel map-panel">
