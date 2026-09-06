@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post } from '@nestjs/common';
 import { PhotoService } from './photo.service';
 
 @Controller('photos')
@@ -11,7 +11,11 @@ export class PhotoController {
   }
 
   @Post('import')
-  importDirectory(@Body('directory') directory: string) {
-    return this.photoService.importDirectory(directory);
+  importDirectory(@Body('directory') directory?: string) {
+    if (!directory?.trim()) {
+      throw new BadRequestException('directory is required');
+    }
+
+    return this.photoService.importDirectory(directory.trim());
   }
 }
