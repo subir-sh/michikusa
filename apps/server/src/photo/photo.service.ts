@@ -117,6 +117,15 @@ export class PhotoService {
     return query.getMany();
   }
 
+  async findById(id: number): Promise<Photo> {
+    const photo = await this.photoRepository.findOne({ where: { id } });
+    if (!photo) {
+      throw new NotFoundException(`Photo ${id} not found`);
+    }
+
+    return photo;
+  }
+
   async findDates(): Promise<PhotoDateCount[]> {
     const rows = await this.photoRepository
       .createQueryBuilder('photo')
@@ -140,11 +149,7 @@ export class PhotoService {
   }
 
   async getPreviewPath(id: number): Promise<string> {
-    const photo = await this.photoRepository.findOne({ where: { id } });
-    if (!photo) {
-      throw new NotFoundException(`Photo ${id} not found`);
-    }
-
+    const photo = await this.findById(id);
     return join(this.photoDirectory, photo.path);
   }
 

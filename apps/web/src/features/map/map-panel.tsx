@@ -2,6 +2,7 @@
 
 import { importLibrary, setOptions } from '@googlemaps/js-api-loader';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { PlaceCandidate } from '../review/use-place-candidates';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 const MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? '';
@@ -24,6 +25,8 @@ interface PhotoDateCount {
 interface MapPanelProps {
   selectedDate: string;
   onSelectedDateChange: (date: string) => void;
+  selectedPhotoId: number | null;
+  placeCandidates: PlaceCandidate[];
 }
 
 function configureMaps() {
@@ -38,7 +41,12 @@ function configureMaps() {
   mapsConfigured = true;
 }
 
-export function MapPanel({ selectedDate, onSelectedDateChange }: MapPanelProps) {
+export function MapPanel({
+  selectedDate,
+  onSelectedDateChange,
+  selectedPhotoId,
+  placeCandidates,
+}: MapPanelProps) {
   const mapElement = useRef<HTMLDivElement>(null);
   const [dates, setDates] = useState<PhotoDateCount[]>([]);
   const [photos, setPhotos] = useState<Photo[]>([]);
@@ -135,55 +143,123 @@ export function MapPanel({ selectedDate, onSelectedDateChange }: MapPanelProps) 
         fullscreenControl: false,
       });
 
-      const bounds = new google.maps.LatLngBounds();
+      const allBounds = new google.maps.LatLngBounds();
       const infoWindow = new google.maps.InfoWindow();
 
       for (const photo of gpsPhotos) {
         const position = { lat: photo.latitude, lng: photo.longitude };
-        bounds.extend(position);
+        allBounds.extend(position);
 
         const feature = new google.maps.Data.Feature({
           id: photo.id,
           geometry: new google.maps.Data.Point(position),
         });
+        feature.setProperty('kind', 'photo');
         feature.setProperty('photo', photo);
+        feature.setProperty('selected', photo.id === selectedPhotoId);
         map.data.add(feature);
       }
 
-      map.data.setStyle({
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 6,
-          fillColor: '#2563eb',
-          fillOpacity: 0.9,
-          strokeColor: '#ffffff',
-          strokeWeight: 1.5,
-        },
+      for (const candidate of placeCandidates) {
+        const feature = new google.maps.Data.Feature({
+          id: `candidate:${candidate.placeId}`,
+          geometry: new google.maps.Data.Point({
+            lat: candidate.latitude,
+            lng: candidate.longitude,
+          }),
+        });
+        feature.setProperty('kind', 'candidate');
+        feature.setProperty('candidate', candidate);
+        map.data.add(feature);
+      }
+
+      map.data.setStyle((feature) => {
+        const kind = feature.getProperty('kind') as string;
+        const selected = feature.getProperty('selected') === true;
+
+        if (kind === 'candidate') {
+          return {
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 8,
+              fillColor: '#f59e0b',
+              fillOpacity: 0.95,
+              strokeColor: '#ffffff',
+              strokeWeight: 2,
+            },
+          };
+        }
+
+        return {
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: selected ? 8 : 6,
+            fillColor: selected ? '#dc2626' : '#2563eb',
+            fillOpacity: 0.9,
+            strokeColor: '#ffffff',
+            strokeWeight: selected ? 2 : 1.5,
+          },
+        };
       });
 
       clickListener = map.data.addListener('click', (event) => {
-        const photo = event.feature.getProperty('photo') as Photo;
+        const kind = event.feature.getProperty('kind') as string;
         const content = document.createElement('div');
         content.className = 'map-info';
 
-        const image = document.createElement('img');
-        image.src = `${API_URL}/photos/${photo.id}/preview`;
-        image.alt = '사진 미리보기';
+        if (kind === 'candidate') {
+          const candidate = event.feature.getProperty(
+            'candidate',
+          ) as PlaceCandidate;
+          const title = document.createElement('strong');
+          title.textContent = candidate.name;
 
-        const time = document.createElement('p');
-        time.textContent = new Date(photo.capturedAt).toLocaleString('ko-KR');
+          const detail = document.createElement('p');
+          const type = candidate.primaryType ?? 'place';
+          detail.textContent = `${type} · ${candidate.distanceMeters}m · score ${candidate.score.toFixed(3)}`;
 
-        content.append(image, time);
+          content.append(title, detail);
+          if (candidate.formattedAddress) {
+            const address = document.createElement('p');
+            address.textContent = candidate.formattedAddress;
+            content.append(address);
+          }
+        } else {
+          const photo = event.feature.getProperty('photo') as Photo;
+          const image = document.createElement('img');
+          image.src = `${API_URL}/photos/${photo.id}/preview`;
+          image.alt = '사진 미리보기';
+
+          const time = document.createElement('p');
+          time.textContent = new Date(photo.capturedAt).toLocaleString('ko-KR');
+          content.append(image, time);
+        }
+
         infoWindow.setContent(content);
         if (event.latLng) infoWindow.setPosition(event.latLng);
         infoWindow.open({ map });
       });
 
-      if (gpsPhotos.length === 1) {
-        map.setCenter(bounds.getCenter());
+      if (placeCandidates.length > 0 && selectedPhotoId !== null) {
+        const focusBounds = new google.maps.LatLngBounds();
+        const selectedPhoto = gpsPhotos.find(
+          (photo) => photo.id === selectedPhotoId,
+        );
+        if (selectedPhoto) {
+          focusBounds.extend({
+            lat: selectedPhoto.latitude,
+            lng: selectedPhoto.longitude,
+          });
+        }
+        for (const candidate of placeCandidates) {
+          focusBounds.extend({ lat: candidate.latitude, lng: candidate.longitude });
+        }
+        map.fitBounds(focusBounds, 72);
+      } else if (gpsPhotos.length === 1) {
+        map.setCenter(allBounds.getCenter());
         map.setZoom(16);
       } else {
-        map.fitBounds(bounds, 48);
+        map.fitBounds(allBounds, 48);
       }
     }
 
@@ -195,7 +271,7 @@ export function MapPanel({ selectedDate, onSelectedDateChange }: MapPanelProps) 
       cancelled = true;
       clickListener?.remove();
     };
-  }, [gpsPhotos]);
+  }, [gpsPhotos, placeCandidates, selectedPhotoId]);
 
   return (
     <section className="panel map-panel">
@@ -204,7 +280,7 @@ export function MapPanel({ selectedDate, onSelectedDateChange }: MapPanelProps) 
           <h2>Raw GPS Map</h2>
           <p>
             {selectedDate
-              ? `${selectedDate} · GPS ${gpsPhotos.length} / 전체 ${photos.length}`
+              ? `${selectedDate} · GPS ${gpsPhotos.length} / 전체 ${photos.length}${placeCandidates.length > 0 ? ` · POI 후보 ${placeCandidates.length}` : ''}`
               : '사진을 가져오면 날짜별로 표시한다.'}
           </p>
         </div>

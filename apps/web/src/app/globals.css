@@ -244,6 +244,10 @@ h1 {
   border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
 }
 
+.timeline-item-selected {
+  background: color-mix(in srgb, CanvasText 5%, transparent);
+}
+
 .timeline-item:last-child {
   border-bottom: 0;
 }
@@ -276,11 +280,35 @@ h1 {
   white-space: nowrap;
 }
 
+.poi-button {
+  justify-self: start;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
 .timeline-empty {
   margin: auto 0 !important;
   padding: 24px 0;
   text-align: center;
   font-size: 13px;
+}
+
+.review-panel {
+  min-height: 150px;
+}
+
+.review-summary {
+  display: grid;
+  gap: 7px;
+}
+
+.review-summary strong {
+  font-size: 14px;
+}
+
+.review-summary p {
+  font-size: 12px;
 }
 
 @media (max-width: 800px) {

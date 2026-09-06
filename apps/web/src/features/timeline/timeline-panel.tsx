@@ -17,6 +17,16 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: '기타',
 };
 
+const POI_ELIGIBLE_CATEGORIES = new Set([
+  'food',
+  'restaurant',
+  'landmark',
+  'accommodation',
+  'transit',
+  'nature',
+  'street',
+]);
+
 interface Photo {
   id: number;
   capturedAt: string;
@@ -34,6 +44,8 @@ interface ClassificationResult {
 
 interface TimelinePanelProps {
   selectedDate: string;
+  selectedPhotoId: number | null;
+  onSelectedPhotoChange: (photoId: number | null) => void;
 }
 
 function formatTime(value: string) {
@@ -45,7 +57,11 @@ function formatTime(value: string) {
   });
 }
 
-export function TimelinePanel({ selectedDate }: TimelinePanelProps) {
+export function TimelinePanel({
+  selectedDate,
+  selectedPhotoId,
+  onSelectedPhotoChange,
+}: TimelinePanelProps) {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(false);
   const [classifying, setClassifying] = useState(false);
@@ -108,8 +124,9 @@ export function TimelinePanel({ selectedDate }: TimelinePanelProps) {
 
   useEffect(() => {
     setClassificationResult(null);
+    onSelectedPhotoChange(null);
     void loadPhotos();
-  }, [loadPhotos]);
+  }, [loadPhotos, onSelectedPhotoChange]);
 
   useEffect(() => {
     const handleImported = () => void loadPhotos();
@@ -159,9 +176,17 @@ export function TimelinePanel({ selectedDate }: TimelinePanelProps) {
         <ol className="timeline-list">
           {photos.map((photo) => {
             const hasGps = photo.latitude !== null && photo.longitude !== null;
+            const canResolvePoi =
+              hasGps &&
+              photo.category !== null &&
+              POI_ELIGIBLE_CATEGORIES.has(photo.category);
+            const selected = photo.id === selectedPhotoId;
 
             return (
-              <li key={photo.id} className="timeline-item">
+              <li
+                key={photo.id}
+                className={`timeline-item${selected ? ' timeline-item-selected' : ''}`}
+              >
                 <div className="timeline-time">{formatTime(photo.capturedAt)}</div>
                 <img
                   src={`${API_URL}/photos/${photo.id}/preview`}
@@ -175,11 +200,16 @@ export function TimelinePanel({ selectedDate }: TimelinePanelProps) {
                       : '미분류'}
                   </span>
                   <small>{hasGps ? 'GPS 있음' : 'GPS 없음'}</small>
-                  {hasGps && (
-                    <small>
-                      {photo.latitude?.toFixed(5)}, {photo.longitude?.toFixed(5)}
-                    </small>
-                  )}
+                  <button
+                    type="button"
+                    className="poi-button"
+                    disabled={!canResolvePoi}
+                    onClick={() =>
+                      onSelectedPhotoChange(selected ? null : photo.id)
+                    }
+                  >
+                    {selected ? '후보 닫기' : 'POI 후보'}
+                  </button>
                 </div>
               </li>
             );
