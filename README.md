@@ -142,11 +142,22 @@ EXIF는 `exifr`로 읽는다. Windows에서 `sharp` 기본 바이너리가 HEIC�
 
 ### Step 2 — Raw GPS Map
 
-- GPS가 있는 날짜 목록 조회
+- 날짜별 전체 사진 수 / GPS 사진 수 조회
 - 날짜별 사진 조회
 - Google Maps에 raw GPS point 표시
 - point 클릭 시 WebP preview와 촬영 시간 표시
+- GPS 없는 날짜도 선택 가능
 - import 완료 후 지도 데이터 자동 갱신
+
+### Step 3 — Day Timeline
+
+- 지도와 동일한 날짜 선택 상태 사용
+- 선택 날짜의 모든 사진을 촬영 시간순으로 표시
+- WebP thumbnail 표시
+- GPS 유무와 좌표 표시
+- import 완료 후 타임라인 자동 갱신
+
+아직 raw photo 기준이다. POI와 Visit이 생기기 전에는 사진 좌표를 경로로 연결하지 않는다.
 
 API:
 
@@ -212,13 +223,12 @@ data/
 
 ## 다음 구현 순서
 
-1. **Day Timeline** — 날짜별 시간순 사진/방문 탐색
-2. **SigLIP2** — 장소 관련 사진 분류
-3. **POI Resolution** — Google Places 후보 조회
-4. **Visit** — 같은 장소의 사진 병합
-5. **일별 경로** — Visit 좌표를 시간순 직선 연결
-6. **Review UI** — 애매한 POI만 직접 확인
-7. **Missing GPS** — 앞뒤 사진을 이용한 위치 보정
+1. **SigLIP2** — 장소와 관련된 사진 분류
+2. **POI Resolution** — Google Places 후보 조회
+3. **Visit** — 같은 장소의 사진 병합
+4. **일별 경로** — Visit 좌표를 시간순 직선 연결
+5. **Review UI** — 애매한 POI만 직접 확인
+6. **Missing GPS** — 앞뒤 사진을 이용한 위치 보정
 
 ## 향후 아이디어
 
