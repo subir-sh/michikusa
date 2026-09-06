@@ -293,74 +293,77 @@ export function MapPanel({
         };
       });
 
-      clickListener = map.data.addListener('click', (event) => {
-        const kind = event.feature.getProperty('kind') as string;
-        if (kind === 'route') return;
+      clickListener = map.data.addListener(
+        'click',
+        (event: google.maps.Data.MouseEvent) => {
+          const kind = event.feature.getProperty('kind') as string;
+          if (kind === 'route') return;
 
-        const content = document.createElement('div');
-        content.className = 'map-info';
+          const content = document.createElement('div');
+          content.className = 'map-info';
 
-        if (kind === 'candidate') {
-          const candidate = event.feature.getProperty(
-            'candidate',
-          ) as PlaceCandidate;
-          const title = document.createElement('strong');
-          title.textContent = candidate.name;
+          if (kind === 'candidate') {
+            const candidate = event.feature.getProperty(
+              'candidate',
+            ) as PlaceCandidate;
+            const title = document.createElement('strong');
+            title.textContent = candidate.name;
 
-          const detail = document.createElement('p');
-          const type = candidate.primaryType ?? 'place';
-          detail.textContent = `${type} · ${candidate.distanceMeters}m · score ${candidate.score.toFixed(3)}`;
+            const detail = document.createElement('p');
+            const type = candidate.primaryType ?? 'place';
+            detail.textContent = `${type} · ${candidate.distanceMeters}m · score ${candidate.score.toFixed(3)}`;
 
-          content.append(title, detail);
-          if (candidate.formattedAddress) {
-            const address = document.createElement('p');
-            address.textContent = candidate.formattedAddress;
-            content.append(address);
+            content.append(title, detail);
+            if (candidate.formattedAddress) {
+              const address = document.createElement('p');
+              address.textContent = candidate.formattedAddress;
+              content.append(address);
+            }
+
+            const confirmButton = document.createElement('button');
+            confirmButton.type = 'button';
+            confirmButton.className = 'map-confirm-button';
+            confirmButton.textContent = '이 장소로 확정';
+            confirmButton.addEventListener('click', async () => {
+              confirmButton.disabled = true;
+              confirmButton.textContent = '저장 중…';
+              try {
+                await onConfirmPlace(candidate.placeId);
+                infoWindow.close();
+              } catch {
+                confirmButton.disabled = false;
+                confirmButton.textContent = '다시 시도';
+              }
+            });
+            content.append(confirmButton);
+          } else if (kind === 'visit') {
+            const visit = event.feature.getProperty('visit') as DayVisit;
+            const title = document.createElement('strong');
+            title.textContent = `Visit #${visit.id}`;
+            const detail = document.createElement('p');
+            const time = new Date(visit.visitedAt).toLocaleTimeString('ko-KR', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            });
+            detail.textContent = `${time} · ${visit.category ?? 'place'} · 사진 ${visit.photoCount}장`;
+            content.append(title, detail);
+          } else {
+            const photo = event.feature.getProperty('photo') as Photo;
+            const image = document.createElement('img');
+            image.src = `${API_URL}/photos/${photo.id}/preview`;
+            image.alt = '사진 미리보기';
+
+            const time = document.createElement('p');
+            time.textContent = new Date(photo.capturedAt).toLocaleString('ko-KR');
+            content.append(image, time);
           }
 
-          const confirmButton = document.createElement('button');
-          confirmButton.type = 'button';
-          confirmButton.className = 'map-confirm-button';
-          confirmButton.textContent = '이 장소로 확정';
-          confirmButton.addEventListener('click', async () => {
-            confirmButton.disabled = true;
-            confirmButton.textContent = '저장 중…';
-            try {
-              await onConfirmPlace(candidate.placeId);
-              infoWindow.close();
-            } catch {
-              confirmButton.disabled = false;
-              confirmButton.textContent = '다시 시도';
-            }
-          });
-          content.append(confirmButton);
-        } else if (kind === 'visit') {
-          const visit = event.feature.getProperty('visit') as DayVisit;
-          const title = document.createElement('strong');
-          title.textContent = `Visit #${visit.id}`;
-          const detail = document.createElement('p');
-          const time = new Date(visit.visitedAt).toLocaleTimeString('ko-KR', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          });
-          detail.textContent = `${time} · ${visit.category ?? 'place'} · 사진 ${visit.photoCount}장`;
-          content.append(title, detail);
-        } else {
-          const photo = event.feature.getProperty('photo') as Photo;
-          const image = document.createElement('img');
-          image.src = `${API_URL}/photos/${photo.id}/preview`;
-          image.alt = '사진 미리보기';
-
-          const time = document.createElement('p');
-          time.textContent = new Date(photo.capturedAt).toLocaleString('ko-KR');
-          content.append(image, time);
-        }
-
-        infoWindow.setContent(content);
-        if (event.latLng) infoWindow.setPosition(event.latLng);
-        infoWindow.open({ map });
-      });
+          infoWindow.setContent(content);
+          if (event.latLng) infoWindow.setPosition(event.latLng);
+          infoWindow.open({ map });
+        },
+      );
 
       if (placeCandidates.length > 0 && selectedPhotoId !== null) {
         const focusBounds = new google.maps.LatLngBounds();
