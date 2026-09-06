@@ -1,8 +1,13 @@
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, mkdirSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as exifr from 'exifr';
@@ -36,6 +41,23 @@ interface PhotoDateRow {
   gpsCount: number | string;
 }
 
+interface ClassificationInput {
+  id: number;
+  path: string;
+}
+
+interface ClassificationOutput {
+  id: number;
+  category?: string;
+  score?: number;
+  error?: string;
+}
+
+interface ClassifierResponse {
+  device: 'cpu' | 'cuda';
+  results: ClassificationOutput[];
+}
+
 export interface PhotoDateCount {
   date: string;
   count: number;
@@ -48,9 +70,20 @@ export interface ImportResult {
   failed: string[];
 }
 
+export interface ClassificationResult {
+  requested: number;
+  classified: number;
+  device: 'cpu' | 'cuda' | null;
+  results: Array<{ id: number; category: string; score: number }>;
+  failed: Array<{ id: number; error: string }>;
+}
+
 @Injectable()
 export class PhotoService {
   private readonly photoDirectory: string;
+  private readonly pythonPath: string;
+  private readonly classifierScript: string;
+  private readonly siglipModel: string;
 
   constructor(
     @InjectRepository(Photo)
@@ -61,6 +94,14 @@ export class PhotoService {
       process.cwd(),
       config.get<string>('PHOTO_DATA_PATH') ?? '../../data/photos',
     );
+    this.pythonPath = config.get<string>('PYTHON_PATH') ?? 'python';
+    this.classifierScript = resolve(
+      process.cwd(),
+      'scripts/siglip_classify.py',
+    );
+    this.siglipModel =
+      config.get<string>('SIGLIP_MODEL') ?? 'google/siglip2-base-patch16-224';
+
     mkdirSync(this.photoDirectory, { recursive: true });
   }
 
@@ -107,6 +148,79 @@ export class PhotoService {
     return join(this.photoDirectory, photo.path);
   }
 
+  async classify(date?: string, limit = 100): Promise<ClassificationResult> {
+    const query = this.photoRepository
+      .createQueryBuilder('photo')
+      .where('photo.category IS NULL')
+      .orderBy('photo.capturedAt', 'ASC')
+      .take(limit);
+
+    if (date) {
+      query.andWhere('date(photo.capturedAt) = :date', { date });
+    }
+
+    const photos = await query.getMany();
+    if (photos.length === 0) {
+      return {
+        requested: 0,
+        classified: 0,
+        device: null,
+        results: [],
+        failed: [],
+      };
+    }
+
+    const classifierResponse = await this.runClassifier(
+      photos.map((photo) => ({
+        id: photo.id,
+        path: join(this.photoDirectory, photo.path),
+      })),
+    );
+
+    const outputById = new Map(
+      classifierResponse.results.map((output) => [output.id, output]),
+    );
+    const results: ClassificationResult['results'] = [];
+    const failed: ClassificationResult['failed'] = [];
+
+    for (const photo of photos) {
+      const output = outputById.get(photo.id);
+
+      if (
+        output?.category &&
+        typeof output.score === 'number' &&
+        Number.isFinite(output.score)
+      ) {
+        results.push({
+          id: photo.id,
+          category: output.category,
+          score: output.score,
+        });
+      } else {
+        failed.push({
+          id: photo.id,
+          error: output?.error ?? 'classifier returned no result',
+        });
+      }
+    }
+
+    if (results.length > 0) {
+      await this.photoRepository.manager.transaction(async (manager) => {
+        for (const result of results) {
+          await manager.update(Photo, result.id, { category: result.category });
+        }
+      });
+    }
+
+    return {
+      requested: photos.length,
+      classified: results.length,
+      device: classifierResponse.device,
+      results,
+      failed,
+    };
+  }
+
   async importDirectory(directory: string): Promise<ImportResult> {
     const sourceDirectory = resolve(directory);
     const sourceStat = await stat(sourceDirectory);
@@ -130,6 +244,65 @@ export class PhotoService {
     }
 
     return result;
+  }
+
+  private async runClassifier(
+    items: ClassificationInput[],
+  ): Promise<ClassifierResponse> {
+    return new Promise((resolvePromise, rejectPromise) => {
+      const child = spawn(
+        this.pythonPath,
+        [this.classifierScript, '--model', this.siglipModel],
+        {
+          cwd: process.cwd(),
+          windowsHide: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      );
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.setEncoding('utf8');
+      child.stderr.setEncoding('utf8');
+      child.stdout.on('data', (chunk: string) => {
+        stdout += chunk;
+      });
+      child.stderr.on('data', (chunk: string) => {
+        stderr += chunk;
+      });
+
+      child.once('error', (error) => {
+        rejectPromise(
+          new ServiceUnavailableException(
+            `Could not start Python classifier: ${error.message}`,
+          ),
+        );
+      });
+
+      child.once('close', (code) => {
+        if (code !== 0) {
+          rejectPromise(
+            new ServiceUnavailableException(
+              stderr.trim() || `Python classifier exited with code ${code}`,
+            ),
+          );
+          return;
+        }
+
+        try {
+          resolvePromise(JSON.parse(stdout) as ClassifierResponse);
+        } catch {
+          rejectPromise(
+            new ServiceUnavailableException(
+              `Python classifier returned invalid JSON${stderr ? `: ${stderr.trim()}` : ''}`,
+            ),
+          );
+        }
+      });
+
+      child.stdin.end(JSON.stringify({ items }));
+    });
   }
 
   private async importFile(filePath: string): Promise<boolean> {
