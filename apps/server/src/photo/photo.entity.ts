@@ -1,4 +1,10 @@
-import { Column, Entity, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { Visit } from '../visit/visit.entity';
 
 @Entity()
@@ -27,9 +33,13 @@ export class Photo {
   @Column({ type: 'text', nullable: true })
   category!: string | null;
 
+  @Column({ nullable: true })
+  visitId!: number | null;
+
   @ManyToOne(() => Visit, (visit) => visit.photos, {
     nullable: true,
     onDelete: 'SET NULL',
   })
+  @JoinColumn({ name: 'visitId' })
   visit!: Visit | null;
 }
