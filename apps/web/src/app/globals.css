@@ -19,6 +19,30 @@ select {
   font: inherit;
 }
 
+button,
+input {
+  min-height: 38px;
+  border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
+  border-radius: 8px;
+  background: Canvas;
+  color: CanvasText;
+}
+
+input {
+  width: 100%;
+  padding: 0 10px;
+}
+
+button {
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .page {
   min-height: 100vh;
   padding: 24px;
@@ -81,6 +105,21 @@ h1 {
 
 .map-panel {
   min-height: calc(100vh - 130px);
+}
+
+.import-form {
+  display: grid;
+  gap: 8px;
+}
+
+.import-result,
+.import-error {
+  margin-top: 10px !important;
+  font-size: 13px;
+}
+
+.import-error {
+  color: #c33 !important;
 }
 
 @media (max-width: 800px) {
