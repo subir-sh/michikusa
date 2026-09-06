@@ -1,14 +1,35 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+
+const CATEGORY_LABELS: Record<string, string> = {
+  food: '음식',
+  restaurant: '식당/카페',
+  landmark: '관광지/랜드마크',
+  accommodation: '숙소',
+  transit: '교통',
+  nature: '자연/공원',
+  street: '거리/도시',
+  people: '사람',
+  screenshot: '스크린샷/문서',
+  other: '기타',
+};
 
 interface Photo {
   id: number;
   capturedAt: string;
   latitude: number | null;
   longitude: number | null;
+  category: string | null;
+}
+
+interface ClassificationResult {
+  requested: number;
+  classified: number;
+  device: 'cpu' | 'cuda' | null;
+  failed: Array<{ id: number; error: string }>;
 }
 
 interface TimelinePanelProps {
@@ -27,7 +48,15 @@ function formatTime(value: string) {
 export function TimelinePanel({ selectedDate }: TimelinePanelProps) {
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(false);
+  const [classifying, setClassifying] = useState(false);
+  const [classificationResult, setClassificationResult] =
+    useState<ClassificationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const unclassifiedCount = useMemo(
+    () => photos.filter((photo) => photo.category === null).length,
+    [photos],
+  );
 
   const loadPhotos = useCallback(async () => {
     if (!selectedDate) {
@@ -51,7 +80,34 @@ export function TimelinePanel({ selectedDate }: TimelinePanelProps) {
     }
   }, [selectedDate]);
 
+  const classifySelectedDate = useCallback(async () => {
+    if (!selectedDate || unclassifiedCount === 0) return;
+
+    setClassifying(true);
+    setError(null);
+    setClassificationResult(null);
+
+    try {
+      const response = await fetch(`${API_URL}/photos/classify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: selectedDate, limit: 200 }),
+      });
+
+      if (!response.ok) throw new Error(await response.text());
+
+      const result = (await response.json()) as ClassificationResult;
+      setClassificationResult(result);
+      await loadPhotos();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setClassifying(false);
+    }
+  }, [loadPhotos, selectedDate, unclassifiedCount]);
+
   useEffect(() => {
+    setClassificationResult(null);
     void loadPhotos();
   }, [loadPhotos]);
 
@@ -64,10 +120,34 @@ export function TimelinePanel({ selectedDate }: TimelinePanelProps) {
   return (
     <section className="panel timeline-panel">
       <div className="timeline-header">
-        <div>
-          <h2>Day Timeline</h2>
-          <p>{selectedDate ? `${selectedDate} · ${photos.length}장` : '날짜를 선택한다.'}</p>
+        <div className="timeline-title-row">
+          <div>
+            <h2>Day Timeline</h2>
+            <p>
+              {selectedDate
+                ? `${selectedDate} · ${photos.length}장 · 미분류 ${unclassifiedCount}`
+                : '날짜를 선택한다.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void classifySelectedDate()}
+            disabled={!selectedDate || unclassifiedCount === 0 || classifying}
+          >
+            {classifying ? '분류 중…' : 'SigLIP2 분류'}
+          </button>
         </div>
+        {classificationResult && (
+          <p className="classification-result">
+            분류 {classificationResult.classified}/{classificationResult.requested}
+            {classificationResult.device
+              ? ` · ${classificationResult.device.toUpperCase()}`
+              : ''}
+            {classificationResult.failed.length > 0
+              ? ` · 실패 ${classificationResult.failed.length}`
+              : ''}
+          </p>
+        )}
       </div>
 
       {!selectedDate && <p className="timeline-empty">표시할 날짜가 없음</p>}
@@ -89,7 +169,12 @@ export function TimelinePanel({ selectedDate }: TimelinePanelProps) {
                   loading="lazy"
                 />
                 <div className="timeline-meta">
-                  <span>{hasGps ? 'GPS 있음' : 'GPS 없음'}</span>
+                  <span>
+                    {photo.category
+                      ? CATEGORY_LABELS[photo.category] ?? photo.category
+                      : '미분류'}
+                  </span>
+                  <small>{hasGps ? 'GPS 있음' : 'GPS 없음'}</small>
                   {hasGps && (
                     <small>
                       {photo.latitude?.toFixed(5)}, {photo.longitude?.toFixed(5)}
