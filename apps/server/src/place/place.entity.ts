@@ -6,9 +6,6 @@ export class Place {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Column()
-  name!: string;
-
   @Column({ type: 'real' })
   latitude!: number;
 
@@ -18,8 +15,8 @@ export class Place {
   @Column({ type: 'text', nullable: true })
   category!: string | null;
 
-  @Column({ type: 'text', nullable: true, unique: true })
-  googlePlaceId!: string | null;
+  @Column({ type: 'text', unique: true })
+  googlePlaceId!: string;
 
   @OneToMany(() => Visit, (visit) => visit.place)
   visits!: Visit[];
