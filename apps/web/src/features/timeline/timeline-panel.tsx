@@ -33,6 +33,7 @@ interface Photo {
   latitude: number | null;
   longitude: number | null;
   category: string | null;
+  visitId: number | null;
 }
 
 interface ClassificationResult {
@@ -130,8 +131,13 @@ export function TimelinePanel({
 
   useEffect(() => {
     const handleImported = () => void loadPhotos();
+    const handleConfirmed = () => void loadPhotos();
     window.addEventListener('michikusa:photos-imported', handleImported);
-    return () => window.removeEventListener('michikusa:photos-imported', handleImported);
+    window.addEventListener('michikusa:place-confirmed', handleConfirmed);
+    return () => {
+      window.removeEventListener('michikusa:photos-imported', handleImported);
+      window.removeEventListener('michikusa:place-confirmed', handleConfirmed);
+    };
   }, [loadPhotos]);
 
   return (
@@ -177,6 +183,7 @@ export function TimelinePanel({
           {photos.map((photo) => {
             const hasGps = photo.latitude !== null && photo.longitude !== null;
             const canResolvePoi =
+              photo.visitId === null &&
               hasGps &&
               photo.category !== null &&
               POI_ELIGIBLE_CATEGORIES.has(photo.category);
@@ -200,6 +207,9 @@ export function TimelinePanel({
                       : '미분류'}
                   </span>
                   <small>{hasGps ? 'GPS 있음' : 'GPS 없음'}</small>
+                  {photo.visitId !== null && (
+                    <small className="visit-badge">Visit #{photo.visitId}</small>
+                  )}
                   <button
                     type="button"
                     className="poi-button"
@@ -208,7 +218,11 @@ export function TimelinePanel({
                       onSelectedPhotoChange(selected ? null : photo.id)
                     }
                   >
-                    {selected ? '후보 닫기' : 'POI 후보'}
+                    {photo.visitId !== null
+                      ? '확정됨'
+                      : selected
+                        ? '후보 닫기'
+                        : 'POI 후보'}
                   </button>
                 </div>
               </li>
