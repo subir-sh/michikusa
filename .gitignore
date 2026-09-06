@@ -1,0 +1,34 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+.next/
+dist/
+coverage/
+*.tsbuildinfo
+
+# local environment
+.env
+.env.*
+!.env.example
+
+# local data / personal media
+/data/
+/ai-review/
+/imports/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
