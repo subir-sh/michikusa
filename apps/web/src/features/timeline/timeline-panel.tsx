@@ -144,6 +144,7 @@ export function TimelinePanel({
       const result = (await response.json()) as ClassificationResult;
       setClassificationResult(result);
       await loadPhotos();
+      window.dispatchEvent(new Event('michikusa:classification-changed'));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

@@ -5,21 +5,28 @@ import { ImportPanel } from '../features/import/import-panel';
 import { MapPanel } from '../features/map/map-panel';
 import { ReviewPanel } from '../features/review/review-panel';
 import { usePlaceCandidates } from '../features/review/use-place-candidates';
+import { useReviewQueue } from '../features/review/use-review-queue';
 import { TimelinePanel } from '../features/timeline/timeline-panel';
 
 export default function Home() {
   const [selectedDate, setSelectedDate] = useState('');
   const [selectedPhotoId, setSelectedPhotoId] = useState<number | null>(null);
   const placeCandidates = usePlaceCandidates(selectedPhotoId);
+  const reviewQueue = useReviewQueue(selectedDate);
 
   function handleDateChange(date: string) {
     setSelectedDate(date);
     setSelectedPhotoId(null);
   }
 
+  function handleNextUnresolved() {
+    setSelectedPhotoId(reviewQueue.nextAfter(selectedPhotoId));
+  }
+
   async function handleConfirmPlace(googlePlaceId: string) {
+    const nextPhotoId = reviewQueue.nextAfter(selectedPhotoId);
     await placeCandidates.confirm(googlePlaceId);
-    setSelectedPhotoId(null);
+    setSelectedPhotoId(nextPhotoId);
   }
 
   async function handleUnassignPlace() {
@@ -59,6 +66,9 @@ export default function Home() {
             confirming={placeCandidates.confirming}
             unassigning={placeCandidates.unassigning}
             error={placeCandidates.error}
+            unresolvedCount={reviewQueue.unresolvedCount}
+            queueLoading={reviewQueue.loading}
+            onNextUnresolved={handleNextUnresolved}
             onUnassign={handleUnassignPlace}
           />
         </aside>
