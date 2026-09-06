@@ -18,6 +18,12 @@ interface Photo {
 interface PhotoDateCount {
   date: string;
   count: number;
+  gpsCount: number;
+}
+
+interface MapPanelProps {
+  selectedDate: string;
+  onSelectedDateChange: (date: string) => void;
 }
 
 function configureMaps() {
@@ -32,10 +38,9 @@ function configureMaps() {
   mapsConfigured = true;
 }
 
-export function MapPanel() {
+export function MapPanel({ selectedDate, onSelectedDateChange }: MapPanelProps) {
   const mapElement = useRef<HTMLDivElement>(null);
   const [dates, setDates] = useState<PhotoDateCount[]>([]);
-  const [selectedDate, setSelectedDate] = useState('');
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,11 +60,11 @@ export function MapPanel() {
 
     const nextDates = (await response.json()) as PhotoDateCount[];
     setDates(nextDates);
-    setSelectedDate((current) => {
-      if (current && nextDates.some((item) => item.date === current)) return current;
-      return nextDates[0]?.date ?? '';
-    });
-  }, []);
+
+    if (!selectedDate || !nextDates.some((item) => item.date === selectedDate)) {
+      onSelectedDateChange(nextDates[0]?.date ?? '');
+    }
+  }, [onSelectedDateChange, selectedDate]);
 
   const loadPhotos = useCallback(async (date: string) => {
     if (!date) {
@@ -200,20 +205,20 @@ export function MapPanel() {
           <p>
             {selectedDate
               ? `${selectedDate} · GPS ${gpsPhotos.length} / 전체 ${photos.length}`
-              : 'GPS가 있는 사진을 가져오면 날짜별로 표시한다.'}
+              : '사진을 가져오면 날짜별로 표시한다.'}
           </p>
         </div>
         <div className="map-controls">
           <select
             value={selectedDate}
-            onChange={(event) => setSelectedDate(event.target.value)}
+            onChange={(event) => onSelectedDateChange(event.target.value)}
             disabled={dates.length === 0}
             aria-label="날짜 선택"
           >
             {dates.length === 0 && <option value="">날짜 없음</option>}
             {dates.map((item) => (
               <option key={item.date} value={item.date}>
-                {item.date} ({item.count})
+                {item.date} ({item.gpsCount}/{item.count})
               </option>
             ))}
           </select>
@@ -233,8 +238,8 @@ export function MapPanel() {
         )}
         {MAPS_API_KEY && !loading && gpsPhotos.length === 0 && (
           <div className="map-empty">
-            <strong>표시할 GPS 사진이 없음</strong>
-            <span>사진을 가져오거나 다른 날짜를 선택한다.</span>
+            <strong>이 날짜에는 GPS 사진이 없음</strong>
+            <span>타임라인에서는 GPS 없는 사진도 확인할 수 있다.</span>
           </div>
         )}
       </div>
