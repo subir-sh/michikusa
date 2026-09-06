@@ -1,6 +1,15 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Photo } from '../photo/photo.entity';
 import { PhotoService } from '../photo/photo.service';
+import { VisitService } from '../visit/visit.service';
+import { Place } from './place.entity';
 
 const PLACES_ENDPOINT = 'https://places.googleapis.com/v1/places:searchNearby';
 const FIELD_MASK = [
@@ -132,6 +141,16 @@ export interface PlaceCandidatesResult {
   candidates: PlaceCandidate[];
 }
 
+export interface ConfirmPlaceResult {
+  photoId: number;
+  placeId: number;
+  visitId: number;
+  googlePlaceId: string;
+  createdPlace: boolean;
+  createdVisit: boolean;
+  visitMergeWindowHours: number;
+}
+
 @Injectable()
 export class PlaceService {
   private readonly apiKey: string;
@@ -139,6 +158,9 @@ export class PlaceService {
   constructor(
     config: ConfigService,
     private readonly photoService: PhotoService,
+    private readonly visitService: VisitService,
+    @InjectRepository(Place)
+    private readonly placeRepository: Repository<Place>,
   ) {
     this.apiKey = config.get<string>('GOOGLE_PLACES_API_KEY') ?? '';
   }
@@ -276,6 +298,69 @@ export class PlaceService {
       eligible: true,
       radius: categoryConfig.radius,
       candidates,
+    };
+  }
+
+  async confirm(
+    photoId: number,
+    googlePlaceId: string,
+  ): Promise<ConfirmPlaceResult> {
+    const photo = await this.photoService.findById(photoId);
+    if (photo.visitId !== null) {
+      throw new BadRequestException(`Photo ${photoId} already belongs to a Visit`);
+    }
+
+    const candidateResult = await this.findCandidates(photoId);
+    const candidate = candidateResult.candidates.find(
+      (item) => item.placeId === googlePlaceId,
+    );
+    if (!candidate) {
+      throw new BadRequestException(
+        'The selected Google Place is not a current candidate for this photo',
+      );
+    }
+
+    if (photo.latitude === null || photo.longitude === null) {
+      throw new BadRequestException('Photo GPS is required');
+    }
+
+    let createdPlace = false;
+    const result = await this.placeRepository.manager.transaction(
+      async (manager) => {
+        let place = await manager.findOne(Place, {
+          where: { googlePlaceId },
+        });
+
+        if (!place) {
+          place = manager.create(Place, {
+            googlePlaceId,
+            latitude: photo.latitude as number,
+            longitude: photo.longitude as number,
+            category: photo.category,
+          });
+          place = await manager.save(place);
+          createdPlace = true;
+        }
+
+        const assigned = await this.visitService.assignPhoto(manager, place, photo);
+        await manager.update(Photo, photo.id, { visitId: assigned.visit.id });
+
+        return {
+          place,
+          visit: assigned.visit,
+          createdVisit: assigned.created,
+        };
+      },
+    );
+
+    return {
+      photoId: photo.id,
+      placeId: result.place.id,
+      visitId: result.visit.id,
+      googlePlaceId: result.place.googlePlaceId,
+      createdPlace,
+      createdVisit: result.createdVisit,
+      visitMergeWindowHours: this.visitService.getMergeWindowHours(),
     };
   }
 }
