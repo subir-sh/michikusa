@@ -17,6 +17,17 @@ interface DayVisitRow {
   photoCount: number | string;
 }
 
+interface PeriodPlaceRow {
+  placeId: number | string;
+  latitude: number | string;
+  longitude: number | string;
+  category: string | null;
+  visitCount: number | string;
+  photoCount: number | string;
+  firstVisitedAt: string;
+  lastVisitedAt: string;
+}
+
 export interface AssignVisitResult {
   visit: Visit;
   created: boolean;
@@ -44,6 +55,17 @@ export interface DayVisit {
   longitude: number;
   category: string | null;
   photoCount: number;
+}
+
+export interface PeriodPlaceSummary {
+  placeId: number;
+  latitude: number;
+  longitude: number;
+  category: string | null;
+  visitCount: number;
+  photoCount: number;
+  firstVisitedAt: string;
+  lastVisitedAt: string;
 }
 
 @Injectable()
@@ -213,6 +235,44 @@ export class VisitService {
       longitude: Number(row.longitude),
       category: row.category,
       photoCount: Number(row.photoCount),
+    }));
+  }
+
+  async findPeriodSummary(
+    period: string,
+    unit: 'month' | 'year',
+  ): Promise<PeriodPlaceSummary[]> {
+    const format = unit === 'month' ? '%Y-%m' : '%Y';
+    const rows = await this.visitRepository
+      .createQueryBuilder('visit')
+      .innerJoin('visit.photos', 'photo')
+      .innerJoin('visit.place', 'place')
+      .select('visit.placeId', 'placeId')
+      .addSelect('place.latitude', 'latitude')
+      .addSelect('place.longitude', 'longitude')
+      .addSelect('place.category', 'category')
+      .addSelect('COUNT(DISTINCT visit.id)', 'visitCount')
+      .addSelect('COUNT(photo.id)', 'photoCount')
+      .addSelect('MIN(photo.capturedAt)', 'firstVisitedAt')
+      .addSelect('MAX(photo.capturedAt)', 'lastVisitedAt')
+      .where(`strftime('${format}', photo.capturedAt) = :period`, { period })
+      .groupBy('visit.placeId')
+      .addGroupBy('place.latitude')
+      .addGroupBy('place.longitude')
+      .addGroupBy('place.category')
+      .orderBy('COUNT(DISTINCT visit.id)', 'DESC')
+      .addOrderBy('COUNT(photo.id)', 'DESC')
+      .getRawMany<PeriodPlaceRow>();
+
+    return rows.map((row) => ({
+      placeId: Number(row.placeId),
+      latitude: Number(row.latitude),
+      longitude: Number(row.longitude),
+      category: row.category,
+      visitCount: Number(row.visitCount),
+      photoCount: Number(row.photoCount),
+      firstVisitedAt: row.firstVisitedAt,
+      lastVisitedAt: row.lastVisitedAt,
     }));
   }
 

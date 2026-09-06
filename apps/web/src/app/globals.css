@@ -91,10 +91,12 @@ h1 {
   margin-top: 16px;
 }
 
+.main-column,
 .sidebar {
   display: grid;
   align-content: start;
   gap: 16px;
+  min-width: 0;
 }
 
 .panel {
@@ -113,6 +115,10 @@ h1 {
   min-height: calc(100vh - 130px);
 }
 
+.period-map-panel {
+  min-height: 420px;
+}
+
 .panel-header {
   display: flex;
   align-items: start;
@@ -126,12 +132,20 @@ h1 {
   gap: 8px;
 }
 
-.map-frame {
+.map-frame,
+.period-map-frame {
   position: relative;
-  min-height: 560px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
   border-radius: 8px;
+}
+
+.map-frame {
+  min-height: 560px;
+}
+
+.period-map-frame {
+  min-height: 360px;
 }
 
 .map-canvas {
@@ -397,6 +411,10 @@ h1 {
 
   .map-frame {
     min-height: 420px;
+  }
+
+  .period-map-frame {
+    min-height: 320px;
   }
 
   .timeline-panel {

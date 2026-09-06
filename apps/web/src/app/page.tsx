@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { ImportPanel } from '../features/import/import-panel';
 import { MapPanel } from '../features/map/map-panel';
+import { PeriodMapPanel } from '../features/map/period-map-panel';
 import { ReviewPanel } from '../features/review/review-panel';
 import { usePlaceCandidates } from '../features/review/use-place-candidates';
 import { useReviewQueue } from '../features/review/use-review-queue';
@@ -44,14 +45,17 @@ export default function Home() {
       </header>
 
       <section className="workspace">
-        <MapPanel
-          selectedDate={selectedDate}
-          onSelectedDateChange={handleDateChange}
-          selectedPhotoId={selectedPhotoId}
-          placeCandidates={placeCandidates.data?.candidates ?? []}
-          hasAssignment={placeCandidates.data?.assignment !== null}
-          onConfirmPlace={handleConfirmPlace}
-        />
+        <div className="main-column">
+          <MapPanel
+            selectedDate={selectedDate}
+            onSelectedDateChange={handleDateChange}
+            selectedPhotoId={selectedPhotoId}
+            placeCandidates={placeCandidates.data?.candidates ?? []}
+            hasAssignment={placeCandidates.data?.assignment !== null}
+            onConfirmPlace={handleConfirmPlace}
+          />
+          <PeriodMapPanel />
+        </div>
         <aside className="sidebar">
           <ImportPanel />
           <TimelinePanel
