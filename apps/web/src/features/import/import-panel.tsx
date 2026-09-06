@@ -33,7 +33,9 @@ export function ImportPanel() {
         throw new Error(await response.text());
       }
 
-      setResult((await response.json()) as ImportResult);
+      const nextResult = (await response.json()) as ImportResult;
+      setResult(nextResult);
+      window.dispatchEvent(new Event('michikusa:photos-imported'));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream, mkdirSync } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as exifr from 'exifr';
@@ -30,6 +30,16 @@ interface PhotoMetadata {
   longitude?: number;
 }
 
+interface PhotoDateRow {
+  date: string | null;
+  count: number | string;
+}
+
+export interface PhotoDateCount {
+  date: string;
+  count: number;
+}
+
 export interface ImportResult {
   imported: number;
   skipped: number;
@@ -52,8 +62,41 @@ export class PhotoService {
     mkdirSync(this.photoDirectory, { recursive: true });
   }
 
-  findAll() {
-    return this.photoRepository.find({ order: { capturedAt: 'ASC' } });
+  findAll(date?: string) {
+    const query = this.photoRepository
+      .createQueryBuilder('photo')
+      .orderBy('photo.capturedAt', 'ASC');
+
+    if (date) {
+      query.where('date(photo.capturedAt) = :date', { date });
+    }
+
+    return query.getMany();
+  }
+
+  async findDates(): Promise<PhotoDateCount[]> {
+    const rows = await this.photoRepository
+      .createQueryBuilder('photo')
+      .select('date(photo.capturedAt)', 'date')
+      .addSelect('COUNT(photo.id)', 'count')
+      .where('photo.latitude IS NOT NULL')
+      .andWhere('photo.longitude IS NOT NULL')
+      .groupBy('date(photo.capturedAt)')
+      .orderBy('date(photo.capturedAt)', 'DESC')
+      .getRawMany<PhotoDateRow>();
+
+    return rows
+      .filter((row): row is PhotoDateRow & { date: string } => row.date !== null)
+      .map((row) => ({ date: row.date, count: Number(row.count) }));
+  }
+
+  async getPreviewPath(id: number): Promise<string> {
+    const photo = await this.photoRepository.findOne({ where: { id } });
+    if (!photo) {
+      throw new NotFoundException(`Photo ${id} not found`);
+    }
+
+    return join(this.photoDirectory, photo.path);
   }
 
   async importDirectory(directory: string): Promise<ImportResult> {

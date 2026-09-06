@@ -20,7 +20,8 @@ select {
 }
 
 button,
-input {
+input,
+select {
   min-height: 38px;
   border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
   border-radius: 8px;
@@ -28,9 +29,13 @@ input {
   color: CanvasText;
 }
 
+input,
+select {
+  padding: 0 10px;
+}
+
 input {
   width: 100%;
-  padding: 0 10px;
 }
 
 button {
@@ -38,7 +43,8 @@ button {
   cursor: pointer;
 }
 
-button:disabled {
+button:disabled,
+select:disabled {
   cursor: default;
   opacity: 0.5;
 }
@@ -107,6 +113,72 @@ h1 {
   min-height: calc(100vh - 130px);
 }
 
+.panel-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.map-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.map-frame {
+  position: relative;
+  min-height: 560px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+  border-radius: 8px;
+}
+
+.map-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.map-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  padding: 24px;
+  text-align: center;
+  background: Canvas;
+}
+
+.map-empty span,
+.map-status {
+  color: color-mix(in srgb, CanvasText 65%, transparent);
+  font-size: 13px;
+}
+
+.map-status {
+  margin-top: 8px !important;
+}
+
+.map-info {
+  width: 240px;
+  color: #1f2937;
+}
+
+.map-info img {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  border-radius: 6px;
+}
+
+.map-info p {
+  margin: 8px 0 0;
+  color: #4b5563;
+  font-size: 12px;
+}
+
 .import-form {
   display: grid;
   gap: 8px;
@@ -123,7 +195,8 @@ h1 {
 }
 
 @media (max-width: 800px) {
-  .header {
+  .header,
+  .panel-header {
     align-items: start;
     flex-direction: column;
   }
@@ -133,6 +206,19 @@ h1 {
   }
 
   .map-panel {
+    min-height: 420px;
+  }
+
+  .map-controls {
+    width: 100%;
+  }
+
+  .map-controls select {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .map-frame {
     min-height: 420px;
   }
 }

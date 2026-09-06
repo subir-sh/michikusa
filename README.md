@@ -132,8 +132,6 @@ EXIF는 `exifr`로 읽는다. Windows에서 `sharp` 기본 바이너리가 HEIC�
 
 ### Step 1 — 로컬 사진 가져오기
 
-구현 완료:
-
 - 로컬 폴더 재귀 스캔
 - JPEG / PNG / WebP / AVIF / HEIC / HEIF 지원
 - SHA-256 기반 중복 제거
@@ -142,11 +140,22 @@ EXIF는 `exifr`로 읽는다. Windows에서 `sharp` 기본 바이너리가 HEIC�
 - SQLite 저장
 - 웹에서 로컬 폴더 경로를 입력해 import
 
+### Step 2 — Raw GPS Map
+
+- GPS가 있는 날짜 목록 조회
+- 날짜별 사진 조회
+- Google Maps에 raw GPS point 표시
+- point 클릭 시 WebP preview와 촬영 시간 표시
+- import 완료 후 지도 데이터 자동 갱신
+
 API:
 
 ```text
 POST /photos/import
 GET  /photos
+GET  /photos?date=YYYY-MM-DD
+GET  /photos/dates
+GET  /photos/:id/preview
 ```
 
 `POST /photos/import` 예시:
@@ -163,6 +172,7 @@ GET  /photos
 
 - Node.js 22+
 - pnpm 12+
+- Google Maps JavaScript API key
 
 ```bash
 pnpm install
@@ -175,7 +185,14 @@ cp apps/server/.env.example apps/server/.env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-Windows에서는 파일을 직접 복사해도 된다.
+`apps/web/.env.local`:
+
+```text
+NEXT_PUBLIC_API_URL=http://localhost:4000
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=...
+```
+
+Windows에서는 환경파일을 직접 복사해도 된다.
 
 ```bash
 pnpm dev
@@ -195,11 +212,11 @@ data/
 
 ## 다음 구현 순서
 
-1. **Raw GPS Map** — 가져온 사진을 지도에 표시
-2. **Day Timeline** — 날짜 필터와 시간순 직선 경로
-3. **SigLIP2** — 장소 관련 사진 분류
-4. **POI Resolution** — Google Places 후보 조회
-5. **Visit** — 같은 장소의 사진 병합
+1. **Day Timeline** — 날짜별 시간순 사진/방문 탐색
+2. **SigLIP2** — 장소 관련 사진 분류
+3. **POI Resolution** — Google Places 후보 조회
+4. **Visit** — 같은 장소의 사진 병합
+5. **일별 경로** — Visit 좌표를 시간순 직선 연결
 6. **Review UI** — 애매한 POI만 직접 확인
 7. **Missing GPS** — 앞뒤 사진을 이용한 위치 보정
 
