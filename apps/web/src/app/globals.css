@@ -86,7 +86,7 @@ h1 {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) 340px;
   gap: 16px;
   margin-top: 16px;
 }
@@ -194,6 +194,76 @@ h1 {
   color: #c33 !important;
 }
 
+.timeline-panel {
+  display: flex;
+  max-height: 520px;
+  min-height: 220px;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+
+.timeline-header {
+  flex: 0 0 auto;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+}
+
+.timeline-list {
+  margin: 0 -16px;
+  padding: 0 16px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.timeline-item {
+  display: grid;
+  grid-template-columns: 58px 72px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 84px;
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+.timeline-item:last-child {
+  border-bottom: 0;
+}
+
+.timeline-time {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-item img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: color-mix(in srgb, CanvasText 6%, transparent);
+}
+
+.timeline-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.timeline-meta small {
+  overflow: hidden;
+  color: color-mix(in srgb, CanvasText 58%, transparent);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-empty {
+  margin: auto 0 !important;
+  padding: 24px 0;
+  text-align: center;
+  font-size: 13px;
+}
+
 @media (max-width: 800px) {
   .header,
   .panel-header {
@@ -220,5 +290,9 @@ h1 {
 
   .map-frame {
     min-height: 420px;
+  }
+
+  .timeline-panel {
+    max-height: 480px;
   }
 }
