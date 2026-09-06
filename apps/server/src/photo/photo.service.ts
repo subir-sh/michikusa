@@ -21,6 +21,8 @@ const SUPPORTED_EXTENSIONS = new Set([
   '.heif',
 ]);
 
+const EXIF_OPTIONS = { exif: true, gps: true } as const;
+
 interface PhotoMetadata {
   DateTimeOriginal?: Date;
   CreateDate?: Date;
@@ -84,11 +86,10 @@ export class PhotoService {
     const existing = await this.photoRepository.findOne({ where: { hash } });
     if (existing) return false;
 
-    const metadata = (await exifr.parse(filePath, {
-      exif: true,
-      gps: true,
-    })) as PhotoMetadata | undefined;
-
+    const metadata = (await exifr.parse(
+      filePath,
+      EXIF_OPTIONS,
+    )) as PhotoMetadata | undefined;
     const fileStat = await stat(filePath);
     const capturedAt =
       metadata?.DateTimeOriginal ?? metadata?.CreateDate ?? fileStat.mtime;
@@ -138,17 +139,15 @@ export class PhotoService {
 
   private async createPreview(sourcePath: string, outputPath: string) {
     const extension = extname(sourcePath).toLowerCase();
+    let input: string | Buffer = sourcePath;
 
-    let image: sharp.Sharp;
     if (extension === '.heic' || extension === '.heif') {
       const source = await readFile(sourcePath);
       const jpeg = await convert({ buffer: source, format: 'JPEG', quality: 0.92 });
-      image = sharp(jpeg);
-    } else {
-      image = sharp(sourcePath);
+      input = Buffer.from(jpeg);
     }
 
-    await image
+    await sharp(input)
       .rotate()
       .resize({
         width: 1600,
