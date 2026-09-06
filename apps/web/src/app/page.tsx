@@ -17,6 +17,11 @@ export default function Home() {
     setSelectedPhotoId(null);
   }
 
+  async function handleConfirmPlace(googlePlaceId: string) {
+    await placeCandidates.confirm(googlePlaceId);
+    setSelectedPhotoId(null);
+  }
+
   return (
     <main className="page">
       <header className="header">
@@ -33,6 +38,7 @@ export default function Home() {
           onSelectedDateChange={handleDateChange}
           selectedPhotoId={selectedPhotoId}
           placeCandidates={placeCandidates.data?.candidates ?? []}
+          onConfirmPlace={handleConfirmPlace}
         />
         <aside className="sidebar">
           <ImportPanel />
@@ -45,6 +51,7 @@ export default function Home() {
             selectedPhotoId={selectedPhotoId}
             data={placeCandidates.data}
             loading={placeCandidates.loading}
+            confirming={placeCandidates.confirming}
             error={placeCandidates.error}
           />
         </aside>
