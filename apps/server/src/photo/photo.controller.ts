@@ -11,17 +11,26 @@ import {
   Query,
   StreamableFile,
 } from '@nestjs/common';
+import { PhotoDiagnosticsService } from './photo-diagnostics.service';
 import { PhotoService } from './photo.service';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 @Controller('photos')
 export class PhotoController {
-  constructor(private readonly photoService: PhotoService) {}
+  constructor(
+    private readonly photoService: PhotoService,
+    private readonly diagnosticsService: PhotoDiagnosticsService,
+  ) {}
 
   @Get('dates')
   findDates() {
     return this.photoService.findDates();
+  }
+
+  @Get('diagnostics')
+  diagnostics() {
+    return this.diagnosticsService.getDiagnostics();
   }
 
   @Get()

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { DiagnosticsPanel } from '../features/diagnostics/diagnostics-panel';
 import { ImportPanel } from '../features/import/import-panel';
 import { MapPanel } from '../features/map/map-panel';
 import { PeriodMapPanel } from '../features/map/period-map-panel';
@@ -58,6 +59,7 @@ export default function Home() {
         </div>
         <aside className="sidebar">
           <ImportPanel />
+          <DiagnosticsPanel />
           <TimelinePanel
             selectedDate={selectedDate}
             selectedPhotoId={selectedPhotoId}
