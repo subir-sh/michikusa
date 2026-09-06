@@ -225,6 +225,13 @@ h1 {
   gap: 10px;
 }
 
+.timeline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
 .timeline-title-row button {
   min-height: 32px;
   padding: 0 9px;
@@ -374,5 +381,9 @@ h1 {
   .timeline-title-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .timeline-actions {
+    justify-content: flex-start;
   }
 }

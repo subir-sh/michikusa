@@ -27,6 +27,8 @@ const SUPPORTED_EXTENSIONS = new Set([
 ]);
 
 const EXIF_OPTIONS = { exif: true, gps: true } as const;
+const LOCATION_INFERENCE_MAX_GAP_MS = 90 * 60 * 1000;
+const LOCATION_INFERENCE_MAX_ANCHOR_DISTANCE_METERS = 300;
 
 interface PhotoMetadata {
   DateTimeOriginal?: Date;
@@ -39,6 +41,7 @@ interface PhotoDateRow {
   date: string | null;
   count: number | string;
   gpsCount: number | string;
+  inferredCount: number | string;
 }
 
 interface ClassificationInput {
@@ -62,6 +65,7 @@ export interface PhotoDateCount {
   date: string;
   count: number;
   gpsCount: number;
+  inferredCount: number;
 }
 
 export interface ImportResult {
@@ -76,6 +80,30 @@ export interface ClassificationResult {
   device: 'cpu' | 'cuda' | null;
   results: Array<{ id: number; category: string; score: number }>;
   failed: Array<{ id: number; error: string }>;
+}
+
+export interface LocationInferenceResult {
+  date: string;
+  attempted: number;
+  inferred: number;
+  skipped: number;
+  maxGapMinutes: number;
+  maxAnchorDistanceMeters: number;
+  results: Array<{
+    id: number;
+    latitude: number;
+    longitude: number;
+    previousPhotoId: number;
+    nextPhotoId: number;
+  }>;
+}
+
+export interface ClearInferredLocationsResult {
+  date: string;
+  cleared: number;
+  blocked: number;
+  clearedPhotoIds: number[];
+  blockedPhotoIds: number[];
 }
 
 @Injectable()
@@ -135,6 +163,10 @@ export class PhotoService {
         'SUM(CASE WHEN photo.latitude IS NOT NULL AND photo.longitude IS NOT NULL THEN 1 ELSE 0 END)',
         'gpsCount',
       )
+      .addSelect(
+        'SUM(CASE WHEN photo.locationInferred = 1 THEN 1 ELSE 0 END)',
+        'inferredCount',
+      )
       .groupBy('date(photo.capturedAt)')
       .orderBy('date(photo.capturedAt)', 'DESC')
       .getRawMany<PhotoDateRow>();
@@ -145,6 +177,7 @@ export class PhotoService {
         date: row.date,
         count: Number(row.count),
         gpsCount: Number(row.gpsCount),
+        inferredCount: Number(row.inferredCount),
       }));
   }
 
@@ -223,6 +256,131 @@ export class PhotoService {
       device: classifierResponse.device,
       results,
       failed,
+    };
+  }
+
+  async inferMissingLocations(date: string): Promise<LocationInferenceResult> {
+    const photos = await this.findAll(date);
+    const missingPhotos = photos.filter(
+      (photo) => photo.latitude === null || photo.longitude === null,
+    );
+    const anchors = photos.filter(
+      (photo): photo is Photo & { latitude: number; longitude: number } =>
+        photo.latitude !== null &&
+        photo.longitude !== null &&
+        !photo.locationInferred,
+    );
+
+    const results: LocationInferenceResult['results'] = [];
+
+    for (const photo of missingPhotos) {
+      let previous: (Photo & { latitude: number; longitude: number }) | null = null;
+      let next: (Photo & { latitude: number; longitude: number }) | null = null;
+
+      for (const anchor of anchors) {
+        if (anchor.capturedAt <= photo.capturedAt) {
+          previous = anchor;
+          continue;
+        }
+
+        next = anchor;
+        break;
+      }
+
+      if (!previous || !next) continue;
+
+      const previousGap = photo.capturedAt.getTime() - previous.capturedAt.getTime();
+      const nextGap = next.capturedAt.getTime() - photo.capturedAt.getTime();
+      if (
+        previousGap > LOCATION_INFERENCE_MAX_GAP_MS ||
+        nextGap > LOCATION_INFERENCE_MAX_GAP_MS
+      ) {
+        continue;
+      }
+
+      const anchorDistance = haversineDistanceMeters(
+        previous.latitude,
+        previous.longitude,
+        next.latitude,
+        next.longitude,
+      );
+      if (anchorDistance > LOCATION_INFERENCE_MAX_ANCHOR_DISTANCE_METERS) {
+        continue;
+      }
+
+      const span = next.capturedAt.getTime() - previous.capturedAt.getTime();
+      const ratio =
+        span > 0
+          ? (photo.capturedAt.getTime() - previous.capturedAt.getTime()) / span
+          : 0.5;
+      const latitude =
+        previous.latitude + (next.latitude - previous.latitude) * ratio;
+      const longitude =
+        previous.longitude + (next.longitude - previous.longitude) * ratio;
+
+      results.push({
+        id: photo.id,
+        latitude,
+        longitude,
+        previousPhotoId: previous.id,
+        nextPhotoId: next.id,
+      });
+    }
+
+    if (results.length > 0) {
+      await this.photoRepository.manager.transaction(async (manager) => {
+        for (const result of results) {
+          await manager.update(Photo, result.id, {
+            latitude: result.latitude,
+            longitude: result.longitude,
+            locationInferred: true,
+          });
+        }
+      });
+    }
+
+    return {
+      date,
+      attempted: missingPhotos.length,
+      inferred: results.length,
+      skipped: missingPhotos.length - results.length,
+      maxGapMinutes: LOCATION_INFERENCE_MAX_GAP_MS / 60 / 1000,
+      maxAnchorDistanceMeters: LOCATION_INFERENCE_MAX_ANCHOR_DISTANCE_METERS,
+      results,
+    };
+  }
+
+  async clearInferredLocations(
+    date: string,
+  ): Promise<ClearInferredLocationsResult> {
+    const inferredPhotos = await this.photoRepository
+      .createQueryBuilder('photo')
+      .where('date(photo.capturedAt) = :date', { date })
+      .andWhere('photo.locationInferred = 1')
+      .orderBy('photo.capturedAt', 'ASC')
+      .getMany();
+
+    const clearable = inferredPhotos.filter((photo) => photo.visitId === null);
+    const blocked = inferredPhotos.filter((photo) => photo.visitId !== null);
+
+    if (clearable.length > 0) {
+      await this.photoRepository.manager.transaction(async (manager) => {
+        for (const photo of clearable) {
+          await manager.update(Photo, photo.id, {
+            latitude: null,
+            longitude: null,
+            locationInferred: false,
+          });
+        }
+      });
+    }
+
+    return {
+      date,
+      cleared: clearable.length,
+      blocked: blocked.length,
+      clearedPhotoIds: clearable.map((photo) => photo.id),
+      blockedPhotoIds: blocked.map((photo) => photo.id),
     };
   }
 
@@ -387,4 +545,23 @@ export class PhotoService {
       .webp({ quality: 82 })
       .toFile(outputPath);
   }
+}
+
+function haversineDistanceMeters(
+  latitudeA: number,
+  longitudeA: number,
+  latitudeB: number,
+  longitudeB: number,
+) {
+  const earthRadius = 6_371_000;
+  const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+  const latitudeDelta = toRadians(latitudeB - latitudeA);
+  const longitudeDelta = toRadians(longitudeB - longitudeA);
+  const a =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(toRadians(latitudeA)) *
+      Math.cos(toRadians(latitudeB)) *
+      Math.sin(longitudeDelta / 2) ** 2;
+
+  return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }

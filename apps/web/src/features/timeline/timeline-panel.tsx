@@ -32,6 +32,7 @@ interface Photo {
   capturedAt: string;
   latitude: number | null;
   longitude: number | null;
+  locationInferred: boolean;
   category: string | null;
   visitId: number | null;
 }
@@ -41,6 +42,19 @@ interface ClassificationResult {
   classified: number;
   device: 'cpu' | 'cuda' | null;
   failed: Array<{ id: number; error: string }>;
+}
+
+interface LocationInferenceResult {
+  attempted: number;
+  inferred: number;
+  skipped: number;
+  maxGapMinutes: number;
+  maxAnchorDistanceMeters: number;
+}
+
+interface ClearInferredLocationsResult {
+  cleared: number;
+  blocked: number;
 }
 
 interface TimelinePanelProps {
@@ -66,12 +80,26 @@ export function TimelinePanel({
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(false);
   const [classifying, setClassifying] = useState(false);
+  const [inferring, setInferring] = useState(false);
+  const [clearingInferred, setClearingInferred] = useState(false);
   const [classificationResult, setClassificationResult] =
     useState<ClassificationResult | null>(null);
+  const [locationResult, setLocationResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const unclassifiedCount = useMemo(
     () => photos.filter((photo) => photo.category === null).length,
+    [photos],
+  );
+  const missingLocationCount = useMemo(
+    () =>
+      photos.filter(
+        (photo) => photo.latitude === null || photo.longitude === null,
+      ).length,
+    [photos],
+  );
+  const inferredLocationCount = useMemo(
+    () => photos.filter((photo) => photo.locationInferred).length,
     [photos],
   );
 
@@ -123,8 +151,67 @@ export function TimelinePanel({
     }
   }, [loadPhotos, selectedDate, unclassifiedCount]);
 
+  const inferLocations = useCallback(async () => {
+    if (!selectedDate || missingLocationCount === 0) return;
+
+    setInferring(true);
+    setError(null);
+    setLocationResult(null);
+
+    try {
+      const response = await fetch(`${API_URL}/photos/infer-locations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: selectedDate }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+
+      const result = (await response.json()) as LocationInferenceResult;
+      setLocationResult(
+        `GPS 추정 ${result.inferred}/${result.attempted} · anchor ${result.maxGapMinutes}분 / ${result.maxAnchorDistanceMeters}m`,
+      );
+      onSelectedPhotoChange(null);
+      await loadPhotos();
+      window.dispatchEvent(new Event('michikusa:locations-changed'));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setInferring(false);
+    }
+  }, [loadPhotos, missingLocationCount, onSelectedPhotoChange, selectedDate]);
+
+  const clearInferredLocations = useCallback(async () => {
+    if (!selectedDate || inferredLocationCount === 0) return;
+
+    setClearingInferred(true);
+    setError(null);
+    setLocationResult(null);
+
+    try {
+      const response = await fetch(`${API_URL}/photos/clear-inferred-locations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: selectedDate }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+
+      const result = (await response.json()) as ClearInferredLocationsResult;
+      setLocationResult(
+        `추정 GPS 초기화 ${result.cleared}장${result.blocked > 0 ? ` · Visit 연결로 유지 ${result.blocked}장` : ''}`,
+      );
+      onSelectedPhotoChange(null);
+      await loadPhotos();
+      window.dispatchEvent(new Event('michikusa:locations-changed'));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setClearingInferred(false);
+    }
+  }, [inferredLocationCount, loadPhotos, onSelectedPhotoChange, selectedDate]);
+
   useEffect(() => {
     setClassificationResult(null);
+    setLocationResult(null);
     onSelectedPhotoChange(null);
     void loadPhotos();
   }, [loadPhotos, onSelectedPhotoChange]);
@@ -132,11 +219,14 @@ export function TimelinePanel({
   useEffect(() => {
     const handleImported = () => void loadPhotos();
     const handlePlaceChanged = () => void loadPhotos();
+    const handleLocationsChanged = () => void loadPhotos();
     window.addEventListener('michikusa:photos-imported', handleImported);
     window.addEventListener('michikusa:place-changed', handlePlaceChanged);
+    window.addEventListener('michikusa:locations-changed', handleLocationsChanged);
     return () => {
       window.removeEventListener('michikusa:photos-imported', handleImported);
       window.removeEventListener('michikusa:place-changed', handlePlaceChanged);
+      window.removeEventListener('michikusa:locations-changed', handleLocationsChanged);
     };
   }, [loadPhotos]);
 
@@ -148,17 +238,35 @@ export function TimelinePanel({
             <h2>Day Timeline</h2>
             <p>
               {selectedDate
-                ? `${selectedDate} · ${photos.length}장 · 미분류 ${unclassifiedCount}`
+                ? `${selectedDate} · ${photos.length}장 · GPS 없음 ${missingLocationCount} · 추정 ${inferredLocationCount}`
                 : '날짜를 선택한다.'}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void classifySelectedDate()}
-            disabled={!selectedDate || unclassifiedCount === 0 || classifying}
-          >
-            {classifying ? '분류 중…' : 'SigLIP2 분류'}
-          </button>
+          <div className="timeline-actions">
+            <button
+              type="button"
+              onClick={() => void classifySelectedDate()}
+              disabled={!selectedDate || unclassifiedCount === 0 || classifying}
+            >
+              {classifying ? '분류 중…' : 'SigLIP2'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void inferLocations()}
+              disabled={!selectedDate || missingLocationCount === 0 || inferring}
+            >
+              {inferring ? '추정 중…' : 'GPS 추정'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void clearInferredLocations()}
+              disabled={
+                !selectedDate || inferredLocationCount === 0 || clearingInferred
+              }
+            >
+              {clearingInferred ? '초기화 중…' : '추정 초기화'}
+            </button>
+          </div>
         </div>
         {classificationResult && (
           <p className="classification-result">
@@ -171,6 +279,7 @@ export function TimelinePanel({
               : ''}
           </p>
         )}
+        {locationResult && <p className="classification-result">{locationResult}</p>}
       </div>
 
       {!selectedDate && <p className="timeline-empty">표시할 날짜가 없음</p>}
@@ -205,7 +314,13 @@ export function TimelinePanel({
                       ? CATEGORY_LABELS[photo.category] ?? photo.category
                       : '미분류'}
                   </span>
-                  <small>{hasGps ? 'GPS 있음' : 'GPS 없음'}</small>
+                  <small>
+                    {photo.locationInferred
+                      ? '추정 GPS'
+                      : hasGps
+                        ? 'GPS 있음'
+                        : 'GPS 없음'}
+                  </small>
                   {photo.visitId !== null && (
                     <small className="visit-badge">Visit #{photo.visitId}</small>
                   )}

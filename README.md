@@ -11,11 +11,12 @@
 1. 촬영 시간과 GPS를 읽는다.
 2. 웹용 WebP preview를 만든다.
 3. 장소와 관련된 사진을 분류한다.
-4. 주변 POI 후보와 연결한다.
-5. 사용자가 실제 장소를 확정한다.
-6. 같은 장소의 사진을 Visit으로 묶는다.
-7. 날짜별 Visit을 시간순 직선으로 연결한다.
-8. 잘못 확정한 장소는 다시 수정한다.
+4. GPS가 없는 일부 사진은 앞뒤 원본 GPS로 보수적으로 위치를 추정한다.
+5. 주변 POI 후보를 조회한다.
+6. 사용자가 실제 장소를 확정한다.
+7. 같은 장소의 사진을 Visit으로 묶는다.
+8. 날짜별 Visit을 시간순 직선으로 연결한다.
+9. 잘못 확정한 장소나 추정 위치는 다시 수정한다.
 
 실제 이동 경로 복원은 하지 않는다.
 
@@ -85,7 +86,7 @@ category?
 googlePlaceId
 ```
 
-`Place.latitude / longitude`는 Google Places 좌표가 아니라 **확정에 사용한 사용자 사진의 GPS**다.
+`Place.latitude / longitude`는 Google Places 좌표가 아니라 **장소 확정에 사용한 사진의 resolved location**이다. 원본 EXIF GPS일 수도 있고, 명확하게 추정 가능했던 사진의 inferred GPS일 수도 있다.
 
 Google Places 응답의 이름, 주소, 좌표, types는 SQLite에 영구 저장하지 않는다. `googlePlaceId`만 장기 식별자로 저장한다.
 
@@ -116,6 +117,8 @@ WebP preview 생성
  ↓
 SigLIP2 분류
  ↓
+필요하면 Missing GPS 보정
+ ↓
 Google Places 주변 후보
  ↓
 사용자가 후보 확정
@@ -127,7 +130,7 @@ Place / Visit
 필요하면 Review에서 수정
 ```
 
-GPS가 없는 사진의 위치 추정은 아직 구현하지 않았다.
+별도 processing state machine은 두지 않는다.
 
 ## 현재 구현
 
@@ -145,8 +148,8 @@ HEIC preview는 Windows 호환성을 위해 `heic-convert → sharp → WebP`로
 
 ### Step 2 — Raw GPS Map
 
-- 날짜별 전체 사진 수 / GPS 사진 수 조회
-- Google Maps에 raw GPS point 표시
+- 날짜별 전체 사진 수 / 위치가 있는 사진 수 조회
+- Google Maps에 raw photo point 표시
 - point 클릭 시 WebP preview와 촬영 시간 표시
 - GPS 없는 날짜도 선택 가능
 
@@ -155,7 +158,7 @@ HEIC preview는 Windows 호환성을 위해 `heic-convert → sharp → WebP`로
 - 지도와 동일한 날짜 선택 상태 사용
 - 선택 날짜의 모든 사진을 촬영 시간순으로 표시
 - WebP thumbnail 표시
-- GPS 유무 표시
+- GPS 상태 표시
 
 ### Step 4 — SigLIP2 분류
 
@@ -202,7 +205,7 @@ street             120m
 
 후보는 최대 10개를 받고 다음 기준으로 정렬한다.
 
-- 사진 GPS와의 거리
+- 사진 좌표와의 거리
 - SigLIP category와 Google Place primary type의 일치 여부
 
 후보 데이터는 현재 화면에서만 사용한다.
@@ -215,7 +218,7 @@ street             120m
 
 1. 서버가 같은 사진의 후보를 다시 조회해 `googlePlaceId`가 실제 후보인지 검증한다.
 2. 같은 `googlePlaceId`의 Place가 없으면 새 Place를 만든다.
-3. Place 좌표는 Google 좌표가 아니라 사진 GPS를 저장한다.
+3. Place 좌표는 Google Places 좌표가 아니라 사진의 resolved location을 저장한다.
 4. 확정한 Photo에 `visitId`를 연결한다.
 5. 같은 Place의 기존 Visit 중 시간적으로 가까운 것이 있으면 병합한다.
 6. 없으면 새 Visit을 만든다.
@@ -230,7 +233,8 @@ street             120m
 
 지도에서는:
 
-- 파란색 작은 점: raw photo GPS
+- 파란색 작은 점: 원본 GPS 사진
+- 회색 작은 점: 추정 GPS 사진
 - 검은색 큰 점: 확정된 Visit
 - 검은 직선: Visit을 시간순으로 연결한 하루 경로
 - 주황색 점: 현재 선택한 Google Places 후보
@@ -256,11 +260,42 @@ Review에서는 현재 `Visit # / Place #`를 확인하고 다음 작업을 할 
 3. 해당 Place에 Visit이 하나도 남지 않으면 Place도 삭제한다.
 4. 지도와 타임라인은 변경 직후 다시 조회한다.
 
+### Step 9 — Missing GPS 보정
+
+GPS가 없는 사진 전체를 억지로 채우지 않는다. **시간적으로 충분히 가깝고 같은 지역에 있다고 볼 근거가 있을 때만** 위치를 추정한다.
+
+현재 조건:
+
+```text
+이전 원본 GPS 사진 존재
+다음 원본 GPS 사진 존재
+이전 사진과 90분 이내
+다음 사진과 90분 이내
+두 anchor의 좌표 간 거리 <= 300m
+```
+
+조건을 모두 만족하면 두 anchor 사이에서 촬영 시각 비율로 latitude / longitude를 선형 보간한다.
+
+중요한 원칙:
+
+- `locationInferred = false`인 **원본 EXIF GPS만 anchor로 사용**한다.
+- 이미 추정한 좌표는 다른 사진 추정의 anchor로 다시 사용하지 않는다.
+- 조건을 만족하지 않으면 그냥 GPS 없음으로 남긴다.
+- 추정된 사진은 `locationInferred = true`로 구분한다.
+- 지도에서는 추정 GPS를 회색 점으로 표시한다.
+- 추정된 사진도 이후 POI 후보 조회가 가능하다.
+- `추정 초기화`로 다시 GPS 없음 상태로 되돌릴 수 있다.
+- 이미 Place / Visit이 확정된 추정 사진은 자동 초기화하지 않는다. 먼저 장소 확정을 해제해야 한다.
+
+초기값인 `90분 / 300m`는 실제 사진 테스트 결과를 보고 조정한다.
+
 ## API
 
 ```text
 POST /photos/import
 POST /photos/classify
+POST /photos/infer-locations
+POST /photos/clear-inferred-locations
 GET  /photos
 GET  /photos?date=YYYY-MM-DD
 GET  /photos/dates
@@ -289,6 +324,22 @@ GET  /visits?date=YYYY-MM-DD
 ```json
 {
   "photoId": 123
+}
+```
+
+`POST /photos/infer-locations`:
+
+```json
+{
+  "date": "2025-05-17"
+}
+```
+
+`POST /photos/clear-inferred-locations`:
+
+```json
+{
+  "date": "2025-05-17"
 }
 ```
 
@@ -419,7 +470,7 @@ GPS 없는 사진이 지도에 뜨지 않는 것은 정상이다.
 
 ### D. SigLIP2
 
-Day Timeline에서 `SigLIP2 분류`를 누른다.
+Day Timeline에서 `SigLIP2`를 누른다.
 
 확인:
 
@@ -499,7 +550,38 @@ Day Timeline에서 `SigLIP2 분류`를 누른다.
 3. `이 장소로 변경`을 누른다.
 4. 새 Visit / 기존 Visit 병합 결과가 올바른지 확인한다.
 
-이 단계에서는 잘못된 자동 cleanup이 없는지 특히 확인한다.
+### I. Missing GPS
+
+GPS가 없는 사진이 **원본 GPS 사진 두 장 사이에 끼어 있는 날짜**를 고른다.
+
+1. `GPS 추정`을 누른다.
+2. 타임라인의 `GPS 없음` 중 일부가 `추정 GPS`로 바뀌는지 본다.
+3. 지도에서 해당 사진이 회색 marker로 나타나는지 본다.
+4. 추정된 장소 관련 사진에서 POI 후보를 조회해 실제 장소 근처인지 본다.
+
+의도적으로 추정되지 않아야 하는 케이스도 확인한다.
+
+- 앞이나 뒤의 원본 GPS anchor가 없음
+- 한쪽 anchor와 90분 이상 떨어짐
+- 앞뒤 anchor 위치가 300m보다 멀리 떨어짐
+
+`추정 초기화`도 테스트한다.
+
+- Visit에 연결되지 않은 추정 사진은 다시 `GPS 없음`이 되어야 한다.
+- Visit에 연결된 추정 사진은 유지되어야 한다.
+- 이 경우 먼저 `확정 해제` 후 다시 `추정 초기화`하면 지워져야 한다.
+
+실제 테스트에서는 다음을 기록하면 된다.
+
+```text
+GPS 없는 사진 수
+추정 성공 수
+실제로 같은 장소였나
+잘못 추정된 사진 수
+너무 보수적이라 놓친 사진 수
+```
+
+이 결과를 보고 `90분 / 300m` 기준을 조정한다.
 
 ## Google Places 데이터 처리 원칙
 
@@ -516,7 +598,7 @@ SQLite에 영구 저장하지 않는 값:
 
 - `googlePlaceId`
 
-Place의 latitude / longitude는 사용자의 사진 GPS이므로 Google Places 응답 데이터가 아니다.
+Place의 latitude / longitude는 사용자의 사진에서 얻은 resolved location이므로 Google Places 응답 좌표가 아니다.
 
 공식 문서:
 
@@ -533,13 +615,13 @@ pnpm typecheck
 pnpm build
 ```
 
-Python SigLIP2 inference와 실제 Google API 호출은 로컬 테스트에서 확인한다.
+Python SigLIP2 inference와 실제 Google API 호출, 사진 데이터 품질은 로컬 테스트에서 확인한다.
 
 ## 다음 구현 순서
 
-1. **Missing GPS** — 앞뒤 사진과 이미 확정된 Visit을 이용한 위치 추정
-2. **Review queue** — 애매한 사진만 모아서 빠르게 처리
-3. **Month / Year exploration** — 경로 대신 cluster / 방문 지역 중심 조회
+1. **Review queue** — 아직 Place가 확정되지 않은 장소 관련 사진을 빠르게 처리
+2. **Month / Year exploration** — 경로 대신 cluster / 방문 지역 중심 조회
+3. **후보 자동 확정 실험** — 실제 테스트 데이터에서 precision이 충분할 때만 검토
 
 ## 향후 아이디어
 

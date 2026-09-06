@@ -14,12 +14,14 @@ interface Photo {
   capturedAt: string;
   latitude: number | null;
   longitude: number | null;
+  locationInferred: boolean;
 }
 
 interface PhotoDateCount {
   date: string;
   count: number;
   gpsCount: number;
+  inferredCount: number;
 }
 
 interface DayVisit {
@@ -76,6 +78,11 @@ export function MapPanel({
       ),
     [photos],
   );
+  const inferredGpsCount = useMemo(
+    () => gpsPhotos.filter((photo) => photo.locationInferred).length,
+    [gpsPhotos],
+  );
+  const originalGpsCount = gpsPhotos.length - inferredGpsCount;
 
   const loadDates = useCallback(async () => {
     const response = await fetch(`${API_URL}/photos/dates`);
@@ -159,11 +166,14 @@ export function MapPanel({
   useEffect(() => {
     const handleImported = () => void refresh();
     const handlePlaceChanged = () => void refresh();
+    const handleLocationsChanged = () => void refresh();
     window.addEventListener('michikusa:photos-imported', handleImported);
     window.addEventListener('michikusa:place-changed', handlePlaceChanged);
+    window.addEventListener('michikusa:locations-changed', handleLocationsChanged);
     return () => {
       window.removeEventListener('michikusa:photos-imported', handleImported);
       window.removeEventListener('michikusa:place-changed', handlePlaceChanged);
+      window.removeEventListener('michikusa:locations-changed', handleLocationsChanged);
     };
   }, [refresh]);
 
@@ -202,6 +212,7 @@ export function MapPanel({
         feature.setProperty('kind', 'photo');
         feature.setProperty('photo', photo);
         feature.setProperty('selected', photo.id === selectedPhotoId);
+        feature.setProperty('inferred', photo.locationInferred);
         map.data.add(feature);
       }
 
@@ -248,6 +259,7 @@ export function MapPanel({
       map.data.setStyle((feature) => {
         const kind = feature.getProperty('kind') as string;
         const selected = feature.getProperty('selected') === true;
+        const inferred = feature.getProperty('inferred') === true;
 
         if (kind === 'route') {
           return {
@@ -287,8 +299,8 @@ export function MapPanel({
           icon: {
             path: google.maps.SymbolPath.CIRCLE,
             scale: selected ? 8 : 5,
-            fillColor: selected ? '#dc2626' : '#2563eb',
-            fillOpacity: selected ? 0.95 : 0.55,
+            fillColor: selected ? '#dc2626' : inferred ? '#64748b' : '#2563eb',
+            fillOpacity: selected ? 0.95 : inferred ? 0.8 : 0.55,
             strokeColor: '#ffffff',
             strokeWeight: selected ? 2 : 1,
           },
@@ -359,7 +371,7 @@ export function MapPanel({
             image.alt = '사진 미리보기';
 
             const time = document.createElement('p');
-            time.textContent = new Date(photo.capturedAt).toLocaleString('ko-KR');
+            time.textContent = `${new Date(photo.capturedAt).toLocaleString('ko-KR')}${photo.locationInferred ? ' · 추정 GPS' : ''}`;
             content.append(image, time);
           }
 
@@ -416,7 +428,7 @@ export function MapPanel({
           <h2>Day Map</h2>
           <p>
             {selectedDate
-              ? `${selectedDate} · GPS ${gpsPhotos.length}/${photos.length} · Visit ${visits.length}${placeCandidates.length > 0 ? ` · 후보 ${placeCandidates.length}` : ''}`
+              ? `${selectedDate} · 원본 GPS ${originalGpsCount} · 추정 ${inferredGpsCount} · Visit ${visits.length}${placeCandidates.length > 0 ? ` · 후보 ${placeCandidates.length}` : ''}`
               : '사진을 가져오면 날짜별로 표시한다.'}
           </p>
         </div>
@@ -430,7 +442,7 @@ export function MapPanel({
             {dates.length === 0 && <option value="">날짜 없음</option>}
             {dates.map((item) => (
               <option key={item.date} value={item.date}>
-                {item.date} ({item.gpsCount}/{item.count})
+                {item.date} (위치 {item.gpsCount}/{item.count}, 추정 {item.inferredCount})
               </option>
             ))}
           </select>
@@ -450,8 +462,8 @@ export function MapPanel({
         )}
         {MAPS_API_KEY && !loading && gpsPhotos.length === 0 && (
           <div className="map-empty">
-            <strong>이 날짜에는 GPS 사진이 없음</strong>
-            <span>타임라인에서는 GPS 없는 사진도 확인할 수 있다.</span>
+            <strong>이 날짜에는 위치가 있는 사진이 없음</strong>
+            <span>타임라인에서 GPS 추정을 시도할 수 있다.</span>
           </div>
         )}
       </div>

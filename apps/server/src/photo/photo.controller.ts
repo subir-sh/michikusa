@@ -57,6 +57,24 @@ export class PhotoController {
     return this.photoService.classify(date, limit);
   }
 
+  @Post('infer-locations')
+  inferLocations(@Body('date') date?: string) {
+    if (!date || !DATE_PATTERN.test(date)) {
+      throw new BadRequestException('date must be YYYY-MM-DD');
+    }
+
+    return this.photoService.inferMissingLocations(date);
+  }
+
+  @Post('clear-inferred-locations')
+  clearInferredLocations(@Body('date') date?: string) {
+    if (!date || !DATE_PATTERN.test(date)) {
+      throw new BadRequestException('date must be YYYY-MM-DD');
+    }
+
+    return this.photoService.clearInferredLocations(date);
+  }
+
   @Post('import')
   importDirectory(@Body('directory') directory?: string) {
     if (!directory?.trim()) {
