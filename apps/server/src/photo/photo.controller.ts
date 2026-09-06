@@ -40,6 +40,23 @@ export class PhotoController {
     return new StreamableFile(createReadStream(path));
   }
 
+  @Post('classify')
+  classify(
+    @Body('date') date?: string,
+    @Body('limit') rawLimit?: number,
+  ) {
+    if (date && !DATE_PATTERN.test(date)) {
+      throw new BadRequestException('date must be YYYY-MM-DD');
+    }
+
+    const limit = rawLimit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+      throw new BadRequestException('limit must be an integer between 1 and 200');
+    }
+
+    return this.photoService.classify(date, limit);
+  }
+
   @Post('import')
   importDirectory(@Body('directory') directory?: string) {
     if (!directory?.trim()) {
