@@ -29,9 +29,20 @@ export interface PlaceCandidatesResult {
   candidates: PlaceCandidate[];
 }
 
+export interface ConfirmPlaceResult {
+  photoId: number;
+  placeId: number;
+  visitId: number;
+  googlePlaceId: string;
+  createdPlace: boolean;
+  createdVisit: boolean;
+  visitMergeWindowHours: number;
+}
+
 export function usePlaceCandidates(photoId: number | null) {
   const [data, setData] = useState<PlaceCandidatesResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,6 +50,7 @@ export function usePlaceCandidates(photoId: number | null) {
       setData(null);
       setError(null);
       setLoading(false);
+      setConfirming(false);
       return;
     }
 
@@ -66,5 +78,33 @@ export function usePlaceCandidates(photoId: number | null) {
     return () => controller.abort();
   }, [photoId]);
 
-  return { data, loading, error };
+  async function confirm(googlePlaceId: string): Promise<ConfirmPlaceResult> {
+    if (photoId === null) throw new Error('No photo selected');
+
+    setConfirming(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${API_URL}/places/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photoId, googlePlaceId }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+
+      const result = (await response.json()) as ConfirmPlaceResult;
+      window.dispatchEvent(
+        new CustomEvent('michikusa:place-confirmed', { detail: result }),
+      );
+      return result;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setError(message);
+      throw cause;
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  return { data, loading, confirming, error, confirm };
 }
