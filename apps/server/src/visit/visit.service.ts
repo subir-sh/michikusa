@@ -22,6 +22,20 @@ export interface AssignVisitResult {
   created: boolean;
 }
 
+export interface VisitAssignment {
+  visitId: number;
+  placeId: number;
+  googlePlaceId: string;
+}
+
+export interface UnassignVisitResult {
+  photoId: number;
+  previousVisitId: number | null;
+  previousPlaceId: number | null;
+  deletedVisit: boolean;
+  deletedPlace: boolean;
+}
+
 export interface DayVisit {
   id: number;
   placeId: number;
@@ -80,6 +94,94 @@ export class VisitService {
     }
 
     return { visit: closestVisit, created: false };
+  }
+
+  async getAssignment(photoId: number): Promise<VisitAssignment | null> {
+    const photo = await this.visitRepository.manager.findOne(Photo, {
+      where: { id: photoId },
+    });
+    if (!photo || photo.visitId === null) return null;
+
+    const visit = await this.visitRepository.findOne({
+      where: { id: photo.visitId },
+      relations: { place: true },
+    });
+    if (!visit) return null;
+
+    return {
+      visitId: visit.id,
+      placeId: visit.placeId,
+      googlePlaceId: visit.place.googlePlaceId,
+    };
+  }
+
+  async unassignPhoto(
+    manager: EntityManager,
+    photo: Photo,
+  ): Promise<UnassignVisitResult> {
+    const previousVisitId = photo.visitId;
+    if (previousVisitId === null) {
+      return {
+        photoId: photo.id,
+        previousVisitId: null,
+        previousPlaceId: null,
+        deletedVisit: false,
+        deletedPlace: false,
+      };
+    }
+
+    const visit = await manager.findOne(Visit, {
+      where: { id: previousVisitId },
+      relations: { photos: true },
+    });
+
+    await manager.update(Photo, photo.id, { visitId: null });
+
+    if (!visit) {
+      return {
+        photoId: photo.id,
+        previousVisitId,
+        previousPlaceId: null,
+        deletedVisit: false,
+        deletedPlace: false,
+      };
+    }
+
+    const remainingPhotos = visit.photos.filter((item) => item.id !== photo.id);
+
+    if (remainingPhotos.length > 0) {
+      const visitedAt = new Date(
+        Math.min(...remainingPhotos.map((item) => item.capturedAt.getTime())),
+      );
+      await manager.update(Visit, visit.id, { visitedAt });
+
+      return {
+        photoId: photo.id,
+        previousVisitId,
+        previousPlaceId: visit.placeId,
+        deletedVisit: false,
+        deletedPlace: false,
+      };
+    }
+
+    await manager.delete(Visit, visit.id);
+    const remainingVisits = await manager.count(Visit, {
+      where: { placeId: visit.placeId },
+    });
+
+    let deletedPlace = false;
+    if (remainingVisits === 0) {
+      await manager.delete(Place, visit.placeId);
+      deletedPlace = true;
+    }
+
+    return {
+      photoId: photo.id,
+      previousVisitId,
+      previousPlaceId: visit.placeId,
+      deletedVisit: true,
+      deletedPlace,
+    };
   }
 
   async findByDate(date: string): Promise<DayVisit[]> {

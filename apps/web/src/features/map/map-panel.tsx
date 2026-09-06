@@ -37,6 +37,7 @@ interface MapPanelProps {
   onSelectedDateChange: (date: string) => void;
   selectedPhotoId: number | null;
   placeCandidates: PlaceCandidate[];
+  hasAssignment: boolean;
   onConfirmPlace: (googlePlaceId: string) => Promise<void>;
 }
 
@@ -57,6 +58,7 @@ export function MapPanel({
   onSelectedDateChange,
   selectedPhotoId,
   placeCandidates,
+  hasAssignment,
   onConfirmPlace,
 }: MapPanelProps) {
   const mapElement = useRef<HTMLDivElement>(null);
@@ -156,12 +158,12 @@ export function MapPanel({
 
   useEffect(() => {
     const handleImported = () => void refresh();
-    const handleConfirmed = () => void refresh();
+    const handlePlaceChanged = () => void refresh();
     window.addEventListener('michikusa:photos-imported', handleImported);
-    window.addEventListener('michikusa:place-confirmed', handleConfirmed);
+    window.addEventListener('michikusa:place-changed', handlePlaceChanged);
     return () => {
       window.removeEventListener('michikusa:photos-imported', handleImported);
-      window.removeEventListener('michikusa:place-confirmed', handleConfirmed);
+      window.removeEventListener('michikusa:place-changed', handlePlaceChanged);
     };
   }, [refresh]);
 
@@ -323,7 +325,9 @@ export function MapPanel({
             const confirmButton = document.createElement('button');
             confirmButton.type = 'button';
             confirmButton.className = 'map-confirm-button';
-            confirmButton.textContent = '이 장소로 확정';
+            confirmButton.textContent = hasAssignment
+              ? '이 장소로 변경'
+              : '이 장소로 확정';
             confirmButton.addEventListener('click', async () => {
               confirmButton.disabled = true;
               confirmButton.textContent = '저장 중…';
@@ -396,7 +400,14 @@ export function MapPanel({
       cancelled = true;
       clickListener?.remove();
     };
-  }, [gpsPhotos, onConfirmPlace, placeCandidates, selectedPhotoId, visits]);
+  }, [
+    gpsPhotos,
+    hasAssignment,
+    onConfirmPlace,
+    placeCandidates,
+    selectedPhotoId,
+    visits,
+  ]);
 
   return (
     <section className="panel map-panel">

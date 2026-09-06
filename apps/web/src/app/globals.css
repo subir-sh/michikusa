@@ -325,6 +325,20 @@ h1 {
   font-size: 12px;
 }
 
+.review-assignment {
+  display: grid;
+  gap: 6px;
+  padding: 10px 0;
+  border-top: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+.review-assignment button {
+  justify-self: start;
+  min-height: 30px;
+  font-size: 12px;
+}
+
 @media (max-width: 800px) {
   .header,
   .panel-header {

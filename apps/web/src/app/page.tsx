@@ -22,6 +22,10 @@ export default function Home() {
     setSelectedPhotoId(null);
   }
 
+  async function handleUnassignPlace() {
+    await placeCandidates.unassign();
+  }
+
   return (
     <main className="page">
       <header className="header">
@@ -38,6 +42,7 @@ export default function Home() {
           onSelectedDateChange={handleDateChange}
           selectedPhotoId={selectedPhotoId}
           placeCandidates={placeCandidates.data?.candidates ?? []}
+          hasAssignment={placeCandidates.data?.assignment !== null}
           onConfirmPlace={handleConfirmPlace}
         />
         <aside className="sidebar">
@@ -52,7 +57,9 @@ export default function Home() {
             data={placeCandidates.data}
             loading={placeCandidates.loading}
             confirming={placeCandidates.confirming}
+            unassigning={placeCandidates.unassigning}
             error={placeCandidates.error}
+            onUnassign={handleUnassignPlace}
           />
         </aside>
       </section>

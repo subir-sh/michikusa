@@ -131,12 +131,12 @@ export function TimelinePanel({
 
   useEffect(() => {
     const handleImported = () => void loadPhotos();
-    const handleConfirmed = () => void loadPhotos();
+    const handlePlaceChanged = () => void loadPhotos();
     window.addEventListener('michikusa:photos-imported', handleImported);
-    window.addEventListener('michikusa:place-confirmed', handleConfirmed);
+    window.addEventListener('michikusa:place-changed', handlePlaceChanged);
     return () => {
       window.removeEventListener('michikusa:photos-imported', handleImported);
-      window.removeEventListener('michikusa:place-confirmed', handleConfirmed);
+      window.removeEventListener('michikusa:place-changed', handlePlaceChanged);
     };
   }, [loadPhotos]);
 
@@ -182,8 +182,7 @@ export function TimelinePanel({
         <ol className="timeline-list">
           {photos.map((photo) => {
             const hasGps = photo.latitude !== null && photo.longitude !== null;
-            const canResolvePoi =
-              photo.visitId === null &&
+            const canReviewPoi =
               hasGps &&
               photo.category !== null &&
               POI_ELIGIBLE_CATEGORIES.has(photo.category);
@@ -213,15 +212,15 @@ export function TimelinePanel({
                   <button
                     type="button"
                     className="poi-button"
-                    disabled={!canResolvePoi}
+                    disabled={!canReviewPoi}
                     onClick={() =>
                       onSelectedPhotoChange(selected ? null : photo.id)
                     }
                   >
-                    {photo.visitId !== null
-                      ? '확정됨'
-                      : selected
-                        ? '후보 닫기'
+                    {selected
+                      ? '닫기'
+                      : photo.visitId !== null
+                        ? '수정'
                         : 'POI 후보'}
                   </button>
                 </div>

@@ -12,9 +12,10 @@
 2. 웹용 WebP preview를 만든다.
 3. 장소와 관련된 사진을 분류한다.
 4. 주변 POI 후보와 연결한다.
-5. 같은 장소의 사진을 하나의 Visit으로 묶는다.
-6. 날짜별 Visit을 시간순 직선으로 연결한다.
-7. 웹 지도와 타임라인에서 과거 기록을 탐색한다.
+5. 사용자가 실제 장소를 확정한다.
+6. 같은 장소의 사진을 Visit으로 묶는다.
+7. 날짜별 Visit을 시간순 직선으로 연결한다.
+8. 잘못 확정한 장소는 다시 수정한다.
 
 실제 이동 경로 복원은 하지 않는다.
 
@@ -56,7 +57,7 @@ apps/
 data/                 # 로컬 전용, Git 제외
 ```
 
-각 앱은 feature-based structure를 사용한다. SigLIP2 inference만 작은 Python script로 분리하고, 별도 Python 서버는 두지 않는다.
+각 앱은 feature-based structure를 사용한다. SigLIP2 inference만 작은 Python script로 분리하고 별도 Python 서버는 두지 않는다.
 
 ## 데이터 모델
 
@@ -122,6 +123,8 @@ Google Places 주변 후보
 Place / Visit
  ↓
 일별 Visit 직선 경로
+ ↓
+필요하면 Review에서 수정
 ```
 
 GPS가 없는 사진의 위치 추정은 아직 구현하지 않았다.
@@ -233,9 +236,25 @@ street             120m
 - 주황색 점: 현재 선택한 Google Places 후보
 - 빨간색 점: 현재 POI 후보를 조회 중인 사진
 
-Visit marker를 누르면 Visit ID, 시각, category, 연결된 사진 수를 확인한다.
-
 실제 도보/대중교통 경로를 추정하지 않고 **Visit 좌표 사이를 직선으로만 연결한다.**
+
+### Step 8 — Review / 장소 수정
+
+확정된 사진도 타임라인의 `수정` 버튼으로 다시 열 수 있다.
+
+Review에서는 현재 `Visit # / Place #`를 확인하고 다음 작업을 할 수 있다.
+
+- `확정 해제`: Photo의 `visitId`를 제거한다.
+- 다른 후보 선택: 기존 확정을 정리하고 새 Place / Visit으로 바로 재확정한다.
+
+재확정은 한 DB transaction 안에서 처리한다.
+
+기존 확정을 제거할 때:
+
+1. Visit에 다른 사진이 남으면 `visitedAt`을 남은 사진의 가장 이른 촬영 시각으로 다시 계산한다.
+2. 사진이 하나도 남지 않으면 Visit을 삭제한다.
+3. 해당 Place에 Visit이 하나도 남지 않으면 Place도 삭제한다.
+4. 지도와 타임라인은 변경 직후 다시 조회한다.
 
 ## API
 
@@ -249,6 +268,7 @@ GET  /photos/:id/preview
 
 GET  /places/candidates?photoId=123
 POST /places/confirm
+POST /places/unassign
 
 GET  /visits?date=YYYY-MM-DD
 ```
@@ -259,6 +279,16 @@ GET  /visits?date=YYYY-MM-DD
 {
   "photoId": 123,
   "googlePlaceId": "ChIJ..."
+}
+```
+
+이미 다른 Place가 확정된 사진에 호출하면 기존 확정을 정리한 뒤 새 후보로 변경한다.
+
+`POST /places/unassign`:
+
+```json
+{
+  "photoId": 123
 }
 ```
 
@@ -446,7 +476,30 @@ Day Timeline에서 `SigLIP2 분류`를 누른다.
 
 여기서는 **실제 이동 경로와 선이 달라도 정상**이다. 목적은 방문 순서의 시각화다.
 
-잘못 확정한 Place를 수정하는 UI는 아직 없다. 초기 테스트에서 처음부터 다시 돌리고 싶다면 서버를 종료한 뒤 `data/michikusa.db`와 `data/photos/`를 지우고 재import한다.
+### H. Review / 수정
+
+확정된 사진의 `수정`을 누른다.
+
+확인 1 — 확정 해제:
+
+1. `확정 해제`를 누른다.
+2. 타임라인에서 Visit ID가 사라지는지 확인한다.
+3. 지도에서 Visit marker / 경로가 즉시 갱신되는지 확인한다.
+
+확인 2 — Visit cleanup:
+
+- 같은 Visit에 사진이 여러 장이면 한 장만 해제해도 Visit은 남아야 한다.
+- 가장 이른 사진을 해제하면 Visit 시각이 다음 사진 시각으로 바뀌어야 한다.
+- 마지막 사진을 해제하면 Visit이 사라져야 한다.
+
+확인 3 — 다른 후보로 변경:
+
+1. 확정된 사진에서 `수정`을 누른다.
+2. 다른 주황색 후보 marker를 선택한다.
+3. `이 장소로 변경`을 누른다.
+4. 새 Visit / 기존 Visit 병합 결과가 올바른지 확인한다.
+
+이 단계에서는 잘못된 자동 cleanup이 없는지 특히 확인한다.
 
 ## Google Places 데이터 처리 원칙
 
@@ -484,15 +537,17 @@ Python SigLIP2 inference와 실제 Google API 호출은 로컬 테스트에서 �
 
 ## 다음 구현 순서
 
-1. **Review / 수정 UI** — 잘못 확정한 Place를 변경하거나 해제
-2. **Missing GPS** — 앞뒤 사진을 이용한 위치 보정
-3. **자동 확정** — 실제 후보 품질이 확인된 뒤 확실한 케이스만 자동 처리
+1. **Missing GPS** — 앞뒤 사진과 이미 확정된 Visit을 이용한 위치 추정
+2. **Review queue** — 애매한 사진만 모아서 빠르게 처리
+3. **Month / Year exploration** — 경로 대신 cluster / 방문 지역 중심 조회
 
 ## 향후 아이디어
 
-- Expo 기반 iPhone 증분 sync
+실제로 필요해졌을 때만 추가한다.
+
+- USB import가 불편하면 Expo 기반 iPhone 증분 sync
 - SigLIP embedding 기반 semantic photo search
-- Codex GUI batch review
+- 애매한 POI를 Codex GUI batch로 추가 판정
 - 필요 시 OCR / 별도 VLM
 - Trip grouping
 - Place / Visit 메모

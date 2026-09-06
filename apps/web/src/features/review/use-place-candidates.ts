@@ -16,13 +16,21 @@ export interface PlaceCandidate {
   score: number;
 }
 
+export interface VisitAssignment {
+  visitId: number;
+  placeId: number;
+  googlePlaceId: string;
+}
+
 export interface PlaceCandidatesResult {
   photo: {
     id: number;
     category: string | null;
     latitude: number | null;
     longitude: number | null;
+    visitId: number | null;
   };
+  assignment: VisitAssignment | null;
   eligible: boolean;
   reason?: string;
   radius: number | null;
@@ -36,13 +44,24 @@ export interface ConfirmPlaceResult {
   googlePlaceId: string;
   createdPlace: boolean;
   createdVisit: boolean;
+  replaced: boolean;
+  previousVisitId: number | null;
   visitMergeWindowHours: number;
+}
+
+export interface UnassignPlaceResult {
+  photoId: number;
+  previousVisitId: number | null;
+  previousPlaceId: number | null;
+  deletedVisit: boolean;
+  deletedPlace: boolean;
 }
 
 export function usePlaceCandidates(photoId: number | null) {
   const [data, setData] = useState<PlaceCandidatesResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [unassigning, setUnassigning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -51,6 +70,7 @@ export function usePlaceCandidates(photoId: number | null) {
       setError(null);
       setLoading(false);
       setConfirming(false);
+      setUnassigning(false);
       return;
     }
 
@@ -94,7 +114,7 @@ export function usePlaceCandidates(photoId: number | null) {
 
       const result = (await response.json()) as ConfirmPlaceResult;
       window.dispatchEvent(
-        new CustomEvent('michikusa:place-confirmed', { detail: result }),
+        new CustomEvent('michikusa:place-changed', { detail: result }),
       );
       return result;
     } catch (cause) {
@@ -106,5 +126,50 @@ export function usePlaceCandidates(photoId: number | null) {
     }
   }
 
-  return { data, loading, confirming, error, confirm };
+  async function unassign(): Promise<UnassignPlaceResult> {
+    if (photoId === null) throw new Error('No photo selected');
+
+    setUnassigning(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${API_URL}/places/unassign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photoId }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+
+      const result = (await response.json()) as UnassignPlaceResult;
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              photo: { ...current.photo, visitId: null },
+              assignment: null,
+            }
+          : current,
+      );
+      window.dispatchEvent(
+        new CustomEvent('michikusa:place-changed', { detail: result }),
+      );
+      return result;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setError(message);
+      throw cause;
+    } finally {
+      setUnassigning(false);
+    }
+  }
+
+  return {
+    data,
+    loading,
+    confirming,
+    unassigning,
+    error,
+    confirm,
+    unassign,
+  };
 }

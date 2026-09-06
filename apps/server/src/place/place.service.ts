@@ -8,7 +8,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Photo } from '../photo/photo.entity';
 import { PhotoService } from '../photo/photo.service';
-import { VisitService } from '../visit/visit.service';
+import {
+  UnassignVisitResult,
+  VisitAssignment,
+  VisitService,
+} from '../visit/visit.service';
 import { Place } from './place.entity';
 
 const PLACES_ENDPOINT = 'https://places.googleapis.com/v1/places:searchNearby';
@@ -134,7 +138,9 @@ export interface PlaceCandidatesResult {
     category: string | null;
     latitude: number | null;
     longitude: number | null;
+    visitId: number | null;
   };
+  assignment: VisitAssignment | null;
   eligible: boolean;
   reason?: string;
   radius: number | null;
@@ -148,6 +154,8 @@ export interface ConfirmPlaceResult {
   googlePlaceId: string;
   createdPlace: boolean;
   createdVisit: boolean;
+  replaced: boolean;
+  previousVisitId: number | null;
   visitMergeWindowHours: number;
 }
 
@@ -167,16 +175,19 @@ export class PlaceService {
 
   async findCandidates(photoId: number): Promise<PlaceCandidatesResult> {
     const photo = await this.photoService.findById(photoId);
+    const assignment = await this.visitService.getAssignment(photoId);
     const photoSummary = {
       id: photo.id,
       category: photo.category,
       latitude: photo.latitude,
       longitude: photo.longitude,
+      visitId: photo.visitId,
     };
 
     if (photo.latitude === null || photo.longitude === null) {
       return {
         photo: photoSummary,
+        assignment,
         eligible: false,
         reason: 'GPS가 없는 사진은 아직 POI 후보를 조회하지 않는다.',
         radius: null,
@@ -187,6 +198,7 @@ export class PlaceService {
     if (!photo.category) {
       return {
         photo: photoSummary,
+        assignment,
         eligible: false,
         reason: 'SigLIP2 분류를 먼저 실행해야 한다.',
         radius: null,
@@ -198,6 +210,7 @@ export class PlaceService {
     if (!categoryConfig) {
       return {
         photo: photoSummary,
+        assignment,
         eligible: false,
         reason: `${photo.category} category는 현재 POI 후보 조회 대상이 아니다.`,
         radius: null,
@@ -276,7 +289,8 @@ export class PlaceService {
             : place.primaryType && categoryConfig.types.includes(place.primaryType)
               ? 1
               : 0.6;
-        const score = Math.round((proximity * 0.7 + primaryMatch * 0.3) * 1000) / 1000;
+        const score =
+          Math.round((proximity * 0.7 + primaryMatch * 0.3) * 1000) / 1000;
 
         return {
           placeId,
@@ -295,6 +309,7 @@ export class PlaceService {
 
     return {
       photo: photoSummary,
+      assignment,
       eligible: true,
       radius: categoryConfig.radius,
       candidates,
@@ -306,8 +321,20 @@ export class PlaceService {
     googlePlaceId: string,
   ): Promise<ConfirmPlaceResult> {
     const photo = await this.photoService.findById(photoId);
-    if (photo.visitId !== null) {
-      throw new BadRequestException(`Photo ${photoId} already belongs to a Visit`);
+    const currentAssignment = await this.visitService.getAssignment(photoId);
+
+    if (currentAssignment?.googlePlaceId === googlePlaceId) {
+      return {
+        photoId,
+        placeId: currentAssignment.placeId,
+        visitId: currentAssignment.visitId,
+        googlePlaceId,
+        createdPlace: false,
+        createdVisit: false,
+        replaced: false,
+        previousVisitId: currentAssignment.visitId,
+        visitMergeWindowHours: this.visitService.getMergeWindowHours(),
+      };
     }
 
     const candidateResult = await this.findCandidates(photoId);
@@ -327,6 +354,10 @@ export class PlaceService {
     let createdPlace = false;
     const result = await this.placeRepository.manager.transaction(
       async (manager) => {
+        if (photo.visitId !== null) {
+          await this.visitService.unassignPhoto(manager, photo);
+        }
+
         let place = await manager.findOne(Place, {
           where: { googlePlaceId },
         });
@@ -360,8 +391,17 @@ export class PlaceService {
       googlePlaceId: result.place.googlePlaceId,
       createdPlace,
       createdVisit: result.createdVisit,
+      replaced: currentAssignment !== null,
+      previousVisitId: currentAssignment?.visitId ?? null,
       visitMergeWindowHours: this.visitService.getMergeWindowHours(),
     };
+  }
+
+  async unassign(photoId: number): Promise<UnassignVisitResult> {
+    const photo = await this.photoService.findById(photoId);
+    return this.placeRepository.manager.transaction((manager) =>
+      this.visitService.unassignPhoto(manager, photo),
+    );
   }
 }
 

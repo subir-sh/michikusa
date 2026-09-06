@@ -32,4 +32,13 @@ export class PlaceController {
 
     return this.placeService.confirm(photoId as number, googlePlaceId.trim());
   }
+
+  @Post('unassign')
+  unassign(@Body('photoId') photoId?: number) {
+    if (!Number.isInteger(photoId)) {
+      throw new BadRequestException('photoId must be an integer');
+    }
+
+    return this.placeService.unassign(photoId as number);
+  }
 }
