@@ -86,9 +86,8 @@ SEA 실행 파일이 repo를 찾는지만 확인:
 
 `.github/workflows/launcher.yml`이 Windows runner에서:
 
-1. 의존성 설치
+1. launcher 의존성 설치
 2. `pnpm launcher:build`
 3. `Michikusa.exe --check`
-4. `Michikusa-launcher-windows` artifact 업로드
 
-를 수행한다.
+를 수행한다. 실제 생성물은 각 개발 PC에서 한 번 빌드해 사용한다.
