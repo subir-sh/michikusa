@@ -1,0 +1,42 @@
+name: Windows Launcher
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - tools/launcher/**
+      - .github/workflows/launcher.yml
+  workflow_dispatch:
+
+jobs:
+  build-launcher:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.3.4 --activate
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build launcher
+        run: pnpm launcher:build
+
+      - name: Smoke test launcher
+        shell: pwsh
+        run: .\Michikusa.exe --check
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Michikusa-launcher-windows
+          path: Michikusa.exe
+          if-no-files-found: error
