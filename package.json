@@ -8,6 +8,11 @@
   "scripts": {
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "launcher:dev": "node tools/launcher/launcher.cjs",
+    "launcher:build": "node tools/launcher/build.cjs"
+  },
+  "devDependencies": {
+    "postject": "1.0.0-alpha.6"
   }
 }
