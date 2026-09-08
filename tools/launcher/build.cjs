@@ -22,6 +22,10 @@ function run(command, args) {
   }
 }
 
+function quoteForCmd(value) {
+  return `"${String(value).replaceAll('"', '""')}"`;
+}
+
 if (process.platform !== 'win32') {
   throw new Error('Michikusa.exe는 Windows에서 빌드하세요.');
 }
@@ -43,15 +47,15 @@ console.log('[launcher:build] node.exe 복사');
 copyFileSync(process.execPath, output);
 
 console.log('[launcher:build] launcher script 주입');
-run('pnpm.cmd', [
-  'exec',
-  'postject',
-  output,
+const postjectCommand = [
+  'pnpm exec postject',
+  quoteForCmd(output),
   'NODE_SEA_BLOB',
-  blob,
+  quoteForCmd(blob),
   '--sentinel-fuse',
   fuse,
-]);
+].join(' ');
+run(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', postjectCommand]);
 
 console.log(`\n[launcher:build] 완료: ${output}`);
 console.log('[launcher:build] .\\Michikusa.exe 더블클릭 또는 실행');
