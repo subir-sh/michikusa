@@ -1,0 +1,7 @@
+{
+  "main": "tools/launcher/launcher.cjs",
+  "output": "tools/launcher/dist/sea-prep.blob",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": false
+}
