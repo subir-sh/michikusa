@@ -25,8 +25,8 @@ jobs:
           corepack enable
           corepack prepare pnpm@12.3.4 --activate
 
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+      - name: Install launcher dependencies
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
 
       - name: Build launcher
         run: pnpm launcher:build
