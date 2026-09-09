@@ -1,0 +1,32 @@
+.progress {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.progressHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: color-mix(in srgb, CanvasText 65%, transparent);
+  font-size: 12px;
+}
+
+.progressHeader strong {
+  color: CanvasText;
+  font-variant-numeric: tabular-nums;
+}
+
+.progressBar {
+  width: 100%;
+  height: 8px;
+}
+
+.currentFile {
+  overflow: hidden;
+  color: color-mix(in srgb, CanvasText 55%, transparent);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

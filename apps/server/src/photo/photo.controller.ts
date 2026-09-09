@@ -12,6 +12,7 @@ import {
   StreamableFile,
 } from '@nestjs/common';
 import { PhotoDiagnosticsService } from './photo-diagnostics.service';
+import { PhotoImportService } from './photo-import.service';
 import { PhotoService } from './photo.service';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -21,6 +22,7 @@ export class PhotoController {
   constructor(
     private readonly photoService: PhotoService,
     private readonly diagnosticsService: PhotoDiagnosticsService,
+    private readonly importService: PhotoImportService,
   ) {}
 
   @Get('dates')
@@ -31,6 +33,11 @@ export class PhotoController {
   @Get('diagnostics')
   diagnostics() {
     return this.diagnosticsService.getDiagnostics();
+  }
+
+  @Get('import-progress')
+  importProgress() {
+    return this.importService.getProgress();
   }
 
   @Get()
@@ -90,6 +97,6 @@ export class PhotoController {
       throw new BadRequestException('directory is required');
     }
 
-    return this.photoService.importDirectory(directory.trim());
+    return this.importService.importDirectory(directory.trim());
   }
 }
