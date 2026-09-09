@@ -1,13 +1,9 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, mkdirSync } from 'node:fs';
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { basename, extname, join, resolve } from 'node:path';
 import { ConflictException, Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as exifr from 'exifr';
-import convert = require('heic-convert');
-import sharp from 'sharp';
 import { Repository } from 'typeorm';
 import { Photo } from './photo.entity';
 
@@ -21,7 +17,7 @@ const SUPPORTED_EXTENSIONS = new Set([
   '.heif',
 ]);
 const EXIF_OPTIONS = { exif: true, gps: true } as const;
-const IMPORT_CONCURRENCY = 2;
+const IMPORT_CONCURRENCY = 8;
 
 interface PhotoMetadata {
   DateTimeOriginal?: Date;
@@ -73,21 +69,13 @@ const IDLE_PROGRESS: ImportProgress = {
 
 @Injectable()
 export class PhotoImportService {
-  private readonly photoDirectory: string;
-  private readonly importingHashes = new Set<string>();
+  private readonly importingFingerprints = new Set<string>();
   private progress: ImportProgress = { ...IDLE_PROGRESS };
 
   constructor(
     @InjectRepository(Photo)
     private readonly photoRepository: Repository<Photo>,
-    config: ConfigService,
-  ) {
-    this.photoDirectory = resolve(
-      process.cwd(),
-      config.get<string>('PHOTO_DATA_PATH') ?? '../../data/photos',
-    );
-    mkdirSync(this.photoDirectory, { recursive: true });
-  }
+  ) {}
 
   getProgress(): ImportProgress {
     return { ...this.progress };
@@ -190,28 +178,33 @@ export class PhotoImportService {
   }
 
   private async importFile(filePath: string): Promise<boolean> {
-    const hash = await this.hashFile(filePath);
-    if (this.importingHashes.has(hash)) return false;
+    const sourcePath = resolve(filePath);
+    const fileStat = await stat(sourcePath);
+    const fingerprint = this.createFingerprint(
+      sourcePath,
+      fileStat.size,
+      fileStat.mtimeMs,
+    );
 
-    this.importingHashes.add(hash);
+    if (this.importingFingerprints.has(fingerprint)) return false;
+
+    this.importingFingerprints.add(fingerprint);
     try {
-      const existing = await this.photoRepository.findOne({ where: { hash } });
+      const existing = await this.photoRepository.findOne({
+        where: { hash: fingerprint },
+      });
       if (existing) return false;
 
       const metadata = (await exifr.parse(
-        filePath,
+        sourcePath,
         EXIF_OPTIONS,
       )) as PhotoMetadata | undefined;
-      const fileStat = await stat(filePath);
       const capturedAt =
         metadata?.DateTimeOriginal ?? metadata?.CreateDate ?? fileStat.mtime;
 
-      const previewName = `${hash}.webp`;
-      await this.createPreview(filePath, join(this.photoDirectory, previewName));
-
       const photo = this.photoRepository.create({
-        hash,
-        path: previewName,
+        hash: fingerprint,
+        path: sourcePath,
         capturedAt,
         latitude: metadata?.latitude ?? null,
         longitude: metadata?.longitude ?? null,
@@ -222,8 +215,25 @@ export class PhotoImportService {
       await this.photoRepository.save(photo);
       return true;
     } finally {
-      this.importingHashes.delete(hash);
+      this.importingFingerprints.delete(fingerprint);
     }
+  }
+
+  private createFingerprint(
+    sourcePath: string,
+    size: number,
+    modifiedAtMs: number,
+  ): string {
+    const normalizedPath =
+      process.platform === 'win32' ? sourcePath.toLowerCase() : sourcePath;
+
+    return createHash('sha256')
+      .update(normalizedPath)
+      .update('\0')
+      .update(String(size))
+      .update('\0')
+      .update(String(Math.trunc(modifiedAtMs)))
+      .digest('hex');
   }
 
   private async collectPhotos(directory: string): Promise<string[]> {
@@ -243,33 +253,5 @@ export class PhotoImportService {
     }
 
     return files.sort();
-  }
-
-  private async hashFile(filePath: string): Promise<string> {
-    const hash = createHash('sha256');
-    for await (const chunk of createReadStream(filePath)) hash.update(chunk);
-    return hash.digest('hex');
-  }
-
-  private async createPreview(sourcePath: string, outputPath: string) {
-    const extension = extname(sourcePath).toLowerCase();
-    let input: string | Buffer = sourcePath;
-
-    if (extension === '.heic' || extension === '.heif') {
-      const source = await readFile(sourcePath);
-      const jpeg = await convert({ buffer: source, format: 'JPEG', quality: 0.92 });
-      input = Buffer.from(jpeg);
-    }
-
-    await sharp(input)
-      .rotate()
-      .resize({
-        width: 1600,
-        height: 1600,
-        fit: 'inside',
-        withoutEnlargement: true,
-      })
-      .webp({ quality: 82 })
-      .toFile(outputPath);
   }
 }

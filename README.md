@@ -1,68 +1,37 @@
-# Michikusa
+# michikusa
 
-사진을 기반으로 과거에 방문한 장소를 복원하고, 지도와 시간순 기록으로 다시 탐색하는 개인용 로컬 아카이브.
+`michikusa`는 사진에 남은 시간과 위치 흔적을 이용해 과거의 하루와 장소를 다시 탐색하는 local-first 개인 사진 지도 아카이브다.
 
-추천이나 SNS가 목적이 아니라 **언제 어디서 무엇을 했는지 오래 보존하고 다시 보는 것**이 목적이다.
+SNS나 장소 추천 서비스가 아니라, 몇 년 뒤에도 **언제 / 어디서 / 무엇을 했는지** 다시 찾아볼 수 있게 하는 것이 목표다. 원본 사진은 사용자가 관리하고, 앱은 로컬 SQLite와 필요한 preview만 유지한다.
 
-## 핵심 경험
+## 핵심 원칙
 
-사진을 대량으로 가져오면:
-
-1. 촬영 시간과 GPS를 읽는다.
-2. 웹용 WebP preview를 만든다.
-3. SigLIP2로 사진을 broad category로 분류한다.
-4. GPS가 없는 일부 사진은 앞뒤 원본 GPS로 보수적으로 위치를 추정한다.
-5. 주변 Google Places 후보를 조회한다.
-6. 사용자가 실제 장소를 확정한다.
-7. 같은 장소의 가까운 사진을 Visit으로 묶는다.
-8. 하루의 Visit을 시간순 직선으로 연결한다.
-9. 월/연 단위로 방문한 Place와 방문 밀도를 다시 본다.
-10. 잘못 확정한 장소나 추정 위치는 언제든 수정한다.
-
-실제 도보/대중교통 경로는 복원하지 않는다.
+- local-first
+- 원본 사진은 프로젝트 밖에 둔다
+- 사진 메타데이터와 사용자 확정 데이터가 source of truth다
+- Google Places는 POI 후보를 찾는 데만 사용한다
+- 이동 경로를 재구성하지 않고 확정된 Visit 사이만 직선으로 연결한다
+- Day / Review Queue / Month / Year는 별도 entity가 아니라 파생 view다
+- 자동화보다 실제 사진으로 품질을 검증한 뒤 threshold를 조정한다
 
 ## 기술 스택
 
-- Monorepo: pnpm workspace
-- Web: Next.js
-- Server: NestJS
-- ORM: TypeORM
-- Database: SQLite (`better-sqlite3`)
-- Storage: local filesystem
-- Vision: SigLIP2
-- Map: Google Maps JavaScript API
-- POI: Google Places API (New)
-- AI fallback: Codex GUI
-
-외부 배포를 전제로 하지 않는다. 서버, DB, preview 사진은 모두 로컬 PC에서 실행·보관한다.
-
-## 구조
-
 ```text
 apps/
-├─ web/
-│  └─ src/
-│     ├─ app/
-│     └─ features/
-│        ├─ diagnostics/
-│        ├─ import/
-│        ├─ map/
-│        ├─ review/
-│        └─ timeline/
-└─ server/
-   ├─ scripts/
-   │  └─ siglip_classify.py
-   └─ src/
-      ├─ photo/
-      ├─ place/
-      └─ visit/
+├─ server/   NestJS + TypeORM + SQLite
+└─ web/      Next.js + React + Google Maps JavaScript API
 
-data/                 # 로컬 전용, Git 제외
-
-docs/                 # 단계별 실제 테스트 메모
+tools/
+└─ launcher/ Windows 개발용 launcher
 ```
 
-feature-based structure를 사용한다. SigLIP2 inference만 작은 Python script로 분리하고 별도 Python 서버는 두지 않는다.
+- Node.js 22+
+- pnpm 12+
+- Python 3.11+
+- SQLite + better-sqlite3
+- SigLIP2
+- Google Maps JavaScript API
+- Places API (New)
 
 ## 데이터 모델
 
@@ -79,6 +48,8 @@ locationInferred
 category?
 visitId?
 ```
+
+새로 인덱싱한 사진에서 `path`는 원본 사진의 absolute path다. `hash`는 첫 인덱싱을 빠르게 끝내기 위해 원본 전체 내용을 읽는 SHA-256 대신 `path + file size + mtime`으로 만든 source fingerprint다. 이전 버전에서 생성된 row의 `path`가 상대 WebP 경로인 경우에도 그대로 읽을 수 있다.
 
 ### Place
 
@@ -110,16 +81,17 @@ Day, Week, Month, Year, Review Queue는 별도 entity로 만들지 않는다. �
 
 ## 현재 구현
 
-### Step 1 — 로컬 사진 가져오기
+### Step 1 — 로컬 사진 빠른 인덱싱
 
 - 로컬 폴더 재귀 스캔
 - JPEG / PNG / WebP / AVIF / HEIC / HEIF 지원
-- SHA-256 중복 제거
+- 원본 전체를 읽지 않는 source fingerprint (`path + size + mtime`)로 재인덱싱 중복 제거
 - 촬영 시간 / GPS 추출
-- 최대 1600px WebP preview 생성
-- SQLite 저장
+- 원본 absolute path를 SQLite에 저장
+- 최대 8개 파일의 메타데이터를 제한 병렬 처리
+- **import 시 WebP preview를 미리 만들지 않음**
 
-HEIC preview는 Windows 호환성을 위해 `heic-convert → sharp → WebP`로 처리한다.
+사진 목록과 지도는 인덱싱이 끝나는 즉시 사용할 수 있다. preview가 실제로 요청되면 그때 최대 1600px WebP를 생성하고 `data/photos/`에 캐시한다. preview 변환은 동시에 최대 2개만 실행하며, 이미 캐시된 preview는 다시 만들지 않는다. HEIC / HEIF는 preview가 필요할 때만 `heic-convert → sharp → WebP`로 처리한다.
 
 ### Step 2 — Raw GPS Map
 
@@ -131,6 +103,7 @@ HEIC preview는 Windows 호환성을 위해 `heic-convert → sharp → WebP`로
 
 - 선택 날짜 사진을 촬영시간 순으로 표시
 - thumbnail / GPS 상태 / category / Visit 상태 표시
+- browser lazy-loading으로 화면에 필요한 preview부터 요청
 
 ### Step 4 — SigLIP2 분류
 
@@ -155,7 +128,7 @@ screenshot
 other
 ```
 
-별도 학습 없이 zero-shot classification을 사용한다. top category만 DB에 저장한다.
+별도 학습 없이 zero-shot classification을 사용한다. top category만 DB에 저장한다. 분류에 필요한 preview가 아직 없으면 먼저 lazy preview queue를 통해 생성한다.
 
 ### Step 5 — POI 후보 조회
 
@@ -178,167 +151,97 @@ street             120m
 
 후보를 확정하면:
 
-1. `googlePlaceId`로 Place를 생성하거나 재사용한다.
-2. Photo에 `visitId`를 연결한다.
-3. 같은 Place의 기존 Visit과 4시간 이내면 같은 Visit으로 묶는다.
-4. 아니면 새 Visit을 만든다.
+1. Google Place ID로 Place를 찾거나 생성
+2. Place 좌표는 사진의 resolved GPS를 사용
+3. 같은 Place의 가까운 Visit을 찾음
+4. 4시간 이내면 기존 Visit에 합침
+5. 아니면 새 Visit 생성
 
-근처 사진을 자동으로 Visit에 넣지는 않는다. 직접 장소가 확정된 사진만 연결한다.
+### Step 7 — Day Visit Route
 
-### Step 7 — 일별 Visit 경로
+하루의 확정된 Visit을 시간순으로 정렬하고 장소 사이를 **직선**으로 연결한다.
 
-지도 표현:
+실제 이동 경로나 도보 / 대중교통 경로를 추정하지 않는다.
 
-- 파란 작은 점: 원본 GPS 사진
-- 회색 작은 점: 추정 GPS 사진
-- 검은 큰 점: 확정 Visit
-- 검은 직선: Visit의 시간순 연결
-- 주황 점: Google Places 후보
-- 빨간 점: 현재 review 중인 사진
+### Step 8 — Place 수정
 
-직선은 방문 순서만 보여준다. 실제 이동 경로가 아니다.
+확정된 사진도 다시 POI 후보를 열어 다른 Place로 변경하거나 확정을 해제할 수 있다.
 
-### Step 8 — Review / 장소 수정
+확정을 해제해서 Visit이 비면 Visit을 삭제하고, Place에도 Visit이 하나도 남지 않으면 Place도 삭제한다.
 
-확정된 사진도 다시 열어:
+### Step 9 — GPS 없는 사진 위치 추정
 
-- 확정 해제
-- 다른 후보로 변경
-
-할 수 있다.
-
-사진이 빠진 뒤 Visit이 비면 Visit을 삭제하고, 해당 Place에 Visit이 하나도 남지 않으면 Place도 삭제한다.
-
-### Step 9 — Missing GPS 보정
-
-GPS가 없는 사진을 무조건 채우지 않는다.
+원본 GPS가 없는 사진만 대상으로 시간상 앞뒤의 **원본 GPS 사진**을 anchor로 사용한다.
 
 현재 조건:
 
 ```text
-이전 원본 GPS 사진 존재
-다음 원본 GPS 사진 존재
-각 anchor와 90분 이내
-두 anchor 좌표 거리 <= 300m
+각 anchor까지 90분 이하
+두 anchor 거리 300m 이하
 ```
 
-조건을 만족하면 촬영시각 비율로 좌표를 선형 보간한다.
-
-- 원본 EXIF GPS만 anchor로 사용
-- 추정 좌표를 다른 추정의 anchor로 재사용하지 않음
-- 추정 좌표는 `locationInferred = true`
-- 추정 초기화 가능
+조건을 만족하면 촬영 시간 비율로 선형 보간한다. 추정 위치는 다시 anchor로 사용하지 않는다.
 
 ### Step 10 — Review Queue
 
-현재 날짜에서 아래 조건을 만족하는 사진을 미확정 queue로 계산한다.
+현재 날짜에서 아래 조건인 사진을 review 대상으로 계산한다.
 
 ```text
-위치 있음
-+ 장소 관련 category
-+ visitId 없음
+Visit 미확정
++ resolved GPS 있음
++ place-worthy category
 ```
 
-별도 Review entity나 status는 없다.
+별도 Review entity나 status는 저장하지 않는다.
 
-- 미확정 사진 수 표시
-- 다음 미확정으로 이동
-- 장소 확정 후 자동으로 다음 사진 이동
-- 분류 / GPS / 장소 변경 시 자동 갱신
+### Step 11 — Month / Year Map
 
-상세 테스트: `docs/testing-step-10.md`
+월 / 연도별로 Place를 집계한다.
 
-### Step 11 — Month / Year Period Map
-
-확정 Visit을 월/연 단위로 Place별 집계한다.
-
-- Place marker
-- Visit 수가 많을수록 큰 marker
-- Place / Visit / 사진 수 요약
-- 첫/마지막 방문일 표시
-- 경로 선은 표시하지 않음
-
-Month / Year entity를 만들지 않고 SQL 집계로 계산한다.
-
-상세 테스트: `docs/testing-step-11.md`
+- Place별 Visit 수
+- 사진 수
+- 최초 / 마지막 방문 시각
+- route 없음
 
 ### Step 12 — Diagnostics
 
-현재 DB 상태를 즉석 집계한다.
+현재 archive 상태를 빠르게 확인한다.
 
-- 전체 사진
-- 원본 GPS / 추정 GPS / GPS 없음
-- 분류 완료 / 미분류
-- 미확정 POI
-- 확정 사진
-- Visit / Place / 기록 날짜 수
-- category별 사진 수
+- 전체 사진 수
+- 원본 / 추정 / 누락 GPS
+- 분류 / 미분류
+- Place 확정 / 미확정 POI
+- Visit / Place / 날짜 수
+- category 분포
 
-실제 첫 테스트에서 파이프라인이 어디까지 정상 동작했는지 확인하기 위한 패널이다.
+## Windows 개발 환경 실행
 
-상세 테스트: `docs/testing-step-12.md`
-
-## API
-
-```text
-POST /photos/import
-POST /photos/classify
-POST /photos/infer-locations
-POST /photos/clear-inferred-locations
-GET  /photos
-GET  /photos?date=YYYY-MM-DD
-GET  /photos/dates
-GET  /photos/diagnostics
-GET  /photos/:id/preview
-
-GET  /places/candidates?photoId=123
-POST /places/confirm
-POST /places/unassign
-
-GET  /visits?date=YYYY-MM-DD
-GET  /visits/summary?month=YYYY-MM
-GET  /visits/summary?year=YYYY
-```
-
-## 로컬 실행 준비
-
-요구사항:
-
-- Node.js 22+
-- pnpm 12+
-- Python 3.11+
-- Google Cloud project + billing
-- Maps JavaScript API
-- Places API (New)
-
-### 1. Node 의존성
+### 1. 의존성
 
 ```bash
 pnpm install
 ```
 
-### 2. Vision용 Python 환경
+### 2. Python 환경
 
-Windows 기준:
+Git Bash 기준:
 
 ```bash
 cd apps/server
 python -m venv .venv
-.venv\Scripts\activate
+source .venv/Scripts/activate
 pip install -r requirements-vision.txt
 cd ../..
 ```
 
-SigLIP2 첫 실행에서는 Hugging Face model download가 발생한다.
-
-### 3. 환경파일
+### 3. 환경변수
 
 ```bash
 cp apps/server/.env.example apps/server/.env
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-`apps/server/.env`:
+`apps/server/.env` 예시:
 
 ```text
 PORT=4000
@@ -346,22 +249,17 @@ DATABASE_PATH=../../data/michikusa.db
 PHOTO_DATA_PATH=../../data/photos
 PYTHON_PATH=.venv\Scripts\python.exe
 SIGLIP_MODEL=google/siglip2-base-patch16-224
-GOOGLE_PLACES_API_KEY=...
+GOOGLE_PLACES_API_KEY=
 ```
 
 `apps/web/.env.local`:
 
 ```text
 NEXT_PUBLIC_API_URL=http://localhost:4000
-NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=...
+NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=
 ```
 
-Google Cloud에서는 billing을 연결하고 `Maps JavaScript API`, `Places API (New)`를 활성화한다.
-
-가능하면 key를 분리한다.
-
-- Web key: Maps JavaScript API 전용 + localhost referrer 제한
-- Server key: Places API (New) 전용 + API restriction
+Google key 없이도 import / timeline / diagnostics / SigLIP2 같은 Google 비의존 기능을 테스트할 수 있다.
 
 ### 4. 실행
 
@@ -373,54 +271,52 @@ pnpm dev
 - Server: `http://localhost:4000`
 - Health: `http://localhost:4000/health`
 
-기본 데이터:
+## Windows 개발용 launcher
 
-```text
-data/
-├─ michikusa.db
-└─ photos/
+처음 한 번:
+
+```bash
+pnpm launcher:build
 ```
 
-## 처음 테스트하는 순서
+repo 루트에 생성되는 `Michikusa.exe`를 더블클릭하면 `pnpm dev`를 실행하고 web / server 준비 후 브라우저를 연다. launcher를 종료하면 자신이 시작한 dev process tree도 종료한다.
 
-아직 한 번도 실행하지 않았다면 처음부터 수만 장을 넣지 않는다. iPhone에서 **100~300장 정도**만 Windows 테스트 폴더로 가져온다.
+자세한 내용은 `docs/testing-launcher.md` 참고.
 
-가능하면 다음이 섞인 날짜를 고른다.
+## Google API
 
-- HEIC
-- 음식 / 식당
-- 관광지
-- 역 / 공항
-- 호텔
-- 거리
-- 사람
-- 스크린샷
-- GPS 없는 사진
+필요한 API:
 
-예:
+- Maps JavaScript API
+- Places API (New)
+
+권장:
+
+- Web key: Maps JavaScript API만 허용 + localhost referrer 제한
+- Server key: Places API (New)만 허용
+
+Google Places에서 장기 저장하는 것은 Google Place ID뿐이다.
+
+## 실제 사진 테스트
+
+기능 추가보다 실제 사진으로 pipeline을 검증하는 것이 우선이다.
+
+권장 sample:
 
 ```text
-D:\MichikusaTest\
+100–300장
+HEIC 포함
+음식 / 식당
+랜드마크
+역 / 공항 / 교통
+호텔
+거리
+사람
+스크린샷
+GPS 없는 사진
 ```
 
-테스트 순서:
-
-1. `pnpm dev`
-2. `D:\MichikusaTest` import
-3. Diagnostics에서 전체 사진 / GPS 수 확인
-4. Day Map에서 raw GPS 위치 확인
-5. SigLIP2 분류 실행
-6. Diagnostics에서 분류 수 확인
-7. GPS 없는 사진이 있으면 `GPS 추정`
-8. 장소 관련 사진에서 `POI 후보`
-9. 실제 장소 후보를 몇 장 확정
-10. 같은 장소 / 가까운 시간 사진의 Visit 병합 확인
-11. 잘못 확정한 사진의 해제 / 변경 확인
-12. Review Queue로 미확정 사진 연속 처리
-13. 하루에 Place를 2곳 이상 확정해 직선 경로 확인
-14. Period Map에서 Month / Year 집계 확인
-
-처음 실제 테스트에서는 특히 아래를 기록한다.
+기록할 것:
 
 ```text
 사진 category
@@ -432,71 +328,28 @@ GPS가 원본인지 추정인지
 Visit 병합 결과가 맞는지
 ```
 
-이 결과를 보고 다음 값을 조정한다.
+이 결과를 보고 category prompt, Places radius / types / ranking, GPS 보간 threshold, Visit 4시간 window를 조정한다.
 
-- SigLIP category prompt
-- category별 Places 반경 / type
-- 후보 ranking
-- Missing GPS의 90분 / 300m 기준
-- Visit 병합 4시간 기준
+## 아직 검증되지 않은 것
 
-실제 데이터 확인 전에는 자동 Place 확정 같은 추가 자동화를 넣지 않는다.
+CI는 Node / Nest / Next의 typecheck와 build를 확인한다. 다음은 실제 Windows에서 별도 검증이 필요하다.
 
-## Google Places 데이터 처리 원칙
+- HEIC lazy preview 변환
+- Python SigLIP2 inference / model download
+- Google Maps / Places API key 동작
+- SQLite 실제 데이터 runtime query
+- POI 후보 품질 / ranking
+- timezone 처리
 
-Google Places는 resolver로만 사용한다.
+## 다음 단계 후보
 
-SQLite에 영구 저장하지 않는 값:
+실제 E2E 테스트 이후 필요할 때만 추가한다.
 
-- displayName
-- formattedAddress
-- Google 좌표
-- types
-
-영구 저장하는 Google 값:
-
-- `googlePlaceId`
-
-Place의 latitude / longitude는 사용자 사진에서 나온 좌표다.
-
-공식 문서:
-
-- https://developers.google.com/maps/documentation/places/web-service/policies
-- https://developers.google.com/maps/documentation/places/web-service/place-id
-
-## CI
-
-GitHub Actions에서 push / PR마다:
-
-```text
-pnpm install
-pnpm typecheck
-pnpm build
-```
-
-를 실행한다.
-
-Python SigLIP2 실제 inference, HEIC 처리, Google API 호출은 로컬 실제 테스트에서 확인한다.
-
-## 다음 단계
-
-현재는 기능을 더 늘리기보다 **실제 사진 100~300장으로 end-to-end 테스트하는 것이 우선**이다.
-
-그 결과를 보고 필요한 것만 추가한다.
-
-후보:
-
-- POI 자동 확정 기준
-- 더 나은 후보 ranking
-- Week exploration
+- automatic POI confirmation
+- ranking 개선
+- Week view
 - semantic search
-- iPhone 증분 sync
+- iPhone incremental sync
 - Trip
 - Notes
 - backup / export
-
-## 원칙
-
-가능한 한 적은 entity, field, dependency로 구현한다.
-
-**실제로 필요해지기 전에는 새로운 abstraction이나 기능을 추가하지 않는다.**

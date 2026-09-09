@@ -33,10 +33,10 @@ function sleep(milliseconds: number) {
 function progressLabel(progress: ImportProgress) {
   if (progress.phase === 'scanning') return '사진 파일 찾는 중…';
   if (progress.phase === 'processing') {
-    return `추가 ${progress.imported} · 중복 ${progress.skipped} · 실패 ${progress.failed}`;
+    return `사진 정보 읽는 중 · 추가 ${progress.imported} · 중복 ${progress.skipped} · 실패 ${progress.failed}`;
   }
-  if (progress.phase === 'completed') return '가져오기 완료';
-  if (progress.phase === 'failed') return progress.error ?? '가져오기 실패';
+  if (progress.phase === 'completed') return '인덱싱 완료';
+  if (progress.phase === 'failed') return progress.error ?? '인덱싱 실패';
   return '대기 중';
 }
 
@@ -128,7 +128,7 @@ export function ImportPanel() {
           aria-label="사진 폴더 경로"
         />
         <button type="submit" disabled={loading || !directory.trim()}>
-          {loading ? '가져오는 중…' : '가져오기'}
+          {loading ? '인덱싱 중…' : '가져오기'}
         </button>
       </form>
 

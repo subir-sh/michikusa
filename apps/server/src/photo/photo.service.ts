@@ -1,8 +1,7 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { createReadStream, mkdirSync } from 'node:fs';
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { extname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { extname, isAbsolute, join, resolve } from 'node:path';
 import {
   Injectable,
   NotFoundException,
@@ -10,32 +9,14 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import * as exifr from 'exifr';
 import convert = require('heic-convert');
 import sharp from 'sharp';
 import { Repository } from 'typeorm';
 import { Photo } from './photo.entity';
 
-const SUPPORTED_EXTENSIONS = new Set([
-  '.jpg',
-  '.jpeg',
-  '.png',
-  '.webp',
-  '.avif',
-  '.heic',
-  '.heif',
-]);
-
-const EXIF_OPTIONS = { exif: true, gps: true } as const;
 const LOCATION_INFERENCE_MAX_GAP_MS = 90 * 60 * 1000;
 const LOCATION_INFERENCE_MAX_ANCHOR_DISTANCE_METERS = 300;
-
-interface PhotoMetadata {
-  DateTimeOriginal?: Date;
-  CreateDate?: Date;
-  latitude?: number;
-  longitude?: number;
-}
+const PREVIEW_CONCURRENCY = 2;
 
 interface PhotoDateRow {
   date: string | null;
@@ -61,17 +42,17 @@ interface ClassifierResponse {
   results: ClassificationOutput[];
 }
 
+interface PreparedClassification {
+  photo: Photo;
+  input: ClassificationInput | null;
+  error: string | null;
+}
+
 export interface PhotoDateCount {
   date: string;
   count: number;
   gpsCount: number;
   inferredCount: number;
-}
-
-export interface ImportResult {
-  imported: number;
-  skipped: number;
-  failed: string[];
 }
 
 export interface ClassificationResult {
@@ -112,6 +93,9 @@ export class PhotoService {
   private readonly pythonPath: string;
   private readonly classifierScript: string;
   private readonly siglipModel: string;
+  private readonly previewJobs = new Map<number, Promise<string>>();
+  private readonly previewWaiters: Array<() => void> = [];
+  private activePreviewJobs = 0;
 
   constructor(
     @InjectRepository(Photo)
@@ -183,7 +167,7 @@ export class PhotoService {
 
   async getPreviewPath(id: number): Promise<string> {
     const photo = await this.findById(id);
-    return join(this.photoDirectory, photo.path);
+    return this.ensurePreview(photo);
   }
 
   async classify(date?: string, limit = 100): Promise<ClassificationResult> {
@@ -208,21 +192,58 @@ export class PhotoService {
       };
     }
 
-    const classifierResponse = await this.runClassifier(
-      photos.map((photo) => ({
-        id: photo.id,
-        path: join(this.photoDirectory, photo.path),
-      })),
+    const prepared = await Promise.all(
+      photos.map(async (photo): Promise<PreparedClassification> => {
+        try {
+          return {
+            photo,
+            input: {
+              id: photo.id,
+              path: await this.ensurePreview(photo),
+            },
+            error: null,
+          };
+        } catch (error) {
+          return {
+            photo,
+            input: null,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }),
     );
 
+    const inputs: ClassificationInput[] = [];
+    const failed: ClassificationResult['failed'] = [];
+    for (const item of prepared) {
+      if (item.input) inputs.push(item.input);
+      else {
+        failed.push({
+          id: item.photo.id,
+          error: item.error ?? 'preview generation failed',
+        });
+      }
+    }
+
+    if (inputs.length === 0) {
+      return {
+        requested: photos.length,
+        classified: 0,
+        device: null,
+        results: [],
+        failed,
+      };
+    }
+
+    const classifierResponse = await this.runClassifier(inputs);
     const outputById = new Map(
       classifierResponse.results.map((output) => [output.id, output]),
     );
     const results: ClassificationResult['results'] = [];
-    const failed: ClassificationResult['failed'] = [];
 
-    for (const photo of photos) {
-      const output = outputById.get(photo.id);
+    for (const item of prepared) {
+      if (!item.input) continue;
+      const output = outputById.get(item.photo.id);
 
       if (
         output?.category &&
@@ -230,13 +251,13 @@ export class PhotoService {
         Number.isFinite(output.score)
       ) {
         results.push({
-          id: photo.id,
+          id: item.photo.id,
           category: output.category,
           score: output.score,
         });
       } else {
         failed.push({
-          id: photo.id,
+          id: item.photo.id,
           error: output?.error ?? 'classifier returned no result',
         });
       }
@@ -384,29 +405,73 @@ export class PhotoService {
     };
   }
 
-  async importDirectory(directory: string): Promise<ImportResult> {
-    const sourceDirectory = resolve(directory);
-    const sourceStat = await stat(sourceDirectory);
-
-    if (!sourceStat.isDirectory()) {
-      throw new Error(`Not a directory: ${sourceDirectory}`);
-    }
-
-    const files = await this.collectPhotos(sourceDirectory);
-    const result: ImportResult = { imported: 0, skipped: 0, failed: [] };
-
-    for (const file of files) {
-      try {
-        const imported = await this.importFile(file);
-        if (imported) result.imported += 1;
-        else result.skipped += 1;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        result.failed.push(`${file}: ${message}`);
+  private async ensurePreview(photo: Photo): Promise<string> {
+    if (!isAbsolute(photo.path)) {
+      const legacyPreviewPath = join(this.photoDirectory, photo.path);
+      if (!existsSync(legacyPreviewPath)) {
+        throw new NotFoundException(`Preview for photo ${photo.id} not found`);
       }
+      return legacyPreviewPath;
     }
 
-    return result;
+    const cachedPath = join(this.photoDirectory, `${photo.hash}.webp`);
+    if (existsSync(cachedPath)) return cachedPath;
+
+    const existingJob = this.previewJobs.get(photo.id);
+    if (existingJob) return existingJob;
+
+    const job = this.withPreviewSlot(async () => {
+      if (existsSync(cachedPath)) return cachedPath;
+      if (!existsSync(photo.path)) {
+        throw new NotFoundException(`Source photo not found: ${photo.path}`);
+      }
+
+      await this.createPreview(photo.path, cachedPath);
+      return cachedPath;
+    }).finally(() => {
+      this.previewJobs.delete(photo.id);
+    });
+
+    this.previewJobs.set(photo.id, job);
+    return job;
+  }
+
+  private async withPreviewSlot<T>(task: () => Promise<T>): Promise<T> {
+    if (this.activePreviewJobs >= PREVIEW_CONCURRENCY) {
+      await new Promise<void>((resolvePromise) => {
+        this.previewWaiters.push(resolvePromise);
+      });
+    }
+
+    this.activePreviewJobs += 1;
+    try {
+      return await task();
+    } finally {
+      this.activePreviewJobs -= 1;
+      this.previewWaiters.shift()?.();
+    }
+  }
+
+  private async createPreview(sourcePath: string, outputPath: string) {
+    const extension = extname(sourcePath).toLowerCase();
+    let input: string | Buffer = sourcePath;
+
+    if (extension === '.heic' || extension === '.heif') {
+      const source = await readFile(sourcePath);
+      const jpeg = await convert({ buffer: source, format: 'JPEG', quality: 0.92 });
+      input = Buffer.from(jpeg);
+    }
+
+    await sharp(input)
+      .rotate()
+      .resize({
+        width: 1600,
+        height: 1600,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .webp({ quality: 82 })
+      .toFile(outputPath);
   }
 
   private async runClassifier(
@@ -466,84 +531,6 @@ export class PhotoService {
 
       child.stdin.end(JSON.stringify({ items }));
     });
-  }
-
-  private async importFile(filePath: string): Promise<boolean> {
-    const hash = await this.hashFile(filePath);
-    const existing = await this.photoRepository.findOne({ where: { hash } });
-    if (existing) return false;
-
-    const metadata = (await exifr.parse(
-      filePath,
-      EXIF_OPTIONS,
-    )) as PhotoMetadata | undefined;
-    const fileStat = await stat(filePath);
-    const capturedAt =
-      metadata?.DateTimeOriginal ?? metadata?.CreateDate ?? fileStat.mtime;
-
-    const previewName = `${hash}.webp`;
-    await this.createPreview(filePath, join(this.photoDirectory, previewName));
-
-    const photo = this.photoRepository.create({
-      hash,
-      path: previewName,
-      capturedAt,
-      latitude: metadata?.latitude ?? null,
-      longitude: metadata?.longitude ?? null,
-      locationInferred: false,
-      category: null,
-    });
-
-    await this.photoRepository.save(photo);
-    return true;
-  }
-
-  private async collectPhotos(directory: string): Promise<string[]> {
-    const entries = await readdir(directory, { withFileTypes: true });
-    const files: string[] = [];
-
-    for (const entry of entries) {
-      const path = join(directory, entry.name);
-
-      if (entry.isDirectory()) {
-        files.push(...(await this.collectPhotos(path)));
-      } else if (
-        entry.isFile() &&
-        SUPPORTED_EXTENSIONS.has(extname(entry.name).toLowerCase())
-      ) {
-        files.push(path);
-      }
-    }
-
-    return files.sort();
-  }
-
-  private async hashFile(filePath: string): Promise<string> {
-    const hash = createHash('sha256');
-    for await (const chunk of createReadStream(filePath)) hash.update(chunk);
-    return hash.digest('hex');
-  }
-
-  private async createPreview(sourcePath: string, outputPath: string) {
-    const extension = extname(sourcePath).toLowerCase();
-    let input: string | Buffer = sourcePath;
-
-    if (extension === '.heic' || extension === '.heif') {
-      const source = await readFile(sourcePath);
-      const jpeg = await convert({ buffer: source, format: 'JPEG', quality: 0.92 });
-      input = Buffer.from(jpeg);
-    }
-
-    await sharp(input)
-      .rotate()
-      .resize({
-        width: 1600,
-        height: 1600,
-        fit: 'inside',
-        withoutEnlargement: true,
-      })
-      .webp({ quality: 82 })
-      .toFile(outputPath);
   }
 }
 
