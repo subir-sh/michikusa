@@ -51,6 +51,7 @@ export interface ImportProgress {
   skipped: number;
   failed: number;
   currentFile: string | null;
+  lastFailure: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;
@@ -64,6 +65,7 @@ const IDLE_PROGRESS: ImportProgress = {
   skipped: 0,
   failed: 0,
   currentFile: null,
+  lastFailure: null,
   startedAt: null,
   finishedAt: null,
   error: null,
@@ -142,7 +144,12 @@ export class PhotoImportService {
             else result.skipped += 1;
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            result.failed.push(`${file}: ${message}`);
+            const failure = `${file}: ${message}`;
+            result.failed.push(failure);
+            this.progress = {
+              ...this.progress,
+              lastFailure: failure,
+            };
           } finally {
             this.progress = {
               ...this.progress,
