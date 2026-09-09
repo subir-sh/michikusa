@@ -4,7 +4,6 @@ import {
   Body,
   Controller,
   Get,
-  Header,
   Param,
   ParseIntPipe,
   Post,
@@ -50,10 +49,9 @@ export class PhotoController {
   }
 
   @Get(':id/preview')
-  @Header('Content-Type', 'image/webp')
   async preview(@Param('id', ParseIntPipe) id: number) {
     const path = await this.photoService.getPreviewPath(id);
-    return new StreamableFile(createReadStream(path));
+    return new StreamableFile(createReadStream(path), { type: 'image/webp' });
   }
 
   @Post('classify')
