@@ -10,7 +10,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import convert = require('heic-convert');
-import sharp from 'sharp';
+import sharp = require('sharp');
 import { Repository } from 'typeorm';
 import { Photo } from './photo.entity';
 
