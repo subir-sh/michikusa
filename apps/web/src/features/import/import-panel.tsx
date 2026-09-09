@@ -19,6 +19,7 @@ interface ImportProgress {
   skipped: number;
   failed: number;
   currentFile: string | null;
+  lastFailure: string | null;
   error: string | null;
 }
 
@@ -37,6 +38,11 @@ function progressLabel(progress: ImportProgress) {
   if (progress.phase === 'completed') return '가져오기 완료';
   if (progress.phase === 'failed') return progress.error ?? '가져오기 실패';
   return '대기 중';
+}
+
+function shortFailure(failure: string) {
+  const separator = failure.indexOf(': ');
+  return separator >= 0 ? failure.slice(separator + 2) : failure;
 }
 
 export function ImportPanel() {
@@ -72,6 +78,7 @@ export function ImportPanel() {
       skipped: 0,
       failed: 0,
       currentFile: null,
+      lastFailure: null,
       error: null,
     });
 
@@ -108,6 +115,7 @@ export function ImportPanel() {
   }
 
   const showProgress = loading && progress !== null;
+  const representativeFailures = result?.failed.slice(0, 5) ?? [];
 
   return (
     <section className="panel">
@@ -146,13 +154,33 @@ export function ImportPanel() {
           {progress.currentFile && (
             <span className={styles.currentFile}>{progress.currentFile}</span>
           )}
+          {progress.lastFailure && (
+            <span className={styles.failureMessage}>
+              최근 실패: {shortFailure(progress.lastFailure)}
+            </span>
+          )}
         </div>
       )}
 
       {result && (
-        <p className="import-result">
-          추가 {result.imported} · 중복 {result.skipped} · 실패 {result.failed.length}
-        </p>
+        <>
+          <p className="import-result">
+            추가 {result.imported} · 중복 {result.skipped} · 실패 {result.failed.length}
+          </p>
+          {representativeFailures.length > 0 && (
+            <details className={styles.failureDetails} open>
+              <summary>실패 원인 보기</summary>
+              <ul>
+                {representativeFailures.map((failure, index) => (
+                  <li key={`${failure}-${index}`}>{failure}</li>
+                ))}
+              </ul>
+              {result.failed.length > representativeFailures.length && (
+                <p>외 {result.failed.length - representativeFailures.length}건</p>
+              )}
+            </details>
+          )}
+        </>
       )}
       {error && <p className="import-error">{error}</p>}
     </section>
