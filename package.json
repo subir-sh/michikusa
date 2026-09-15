@@ -9,6 +9,7 @@
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
+    "mobile": "pnpm --filter @michikusa/mobile start",
     "launcher:dev": "node tools/launcher/launcher.cjs",
     "launcher:build": "node tools/launcher/build.cjs"
   },

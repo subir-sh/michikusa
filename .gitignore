@@ -11,6 +11,9 @@ dist/
 coverage/
 *.tsbuildinfo
 /Michikusa.exe
+.expo/
+apps/mobile/ios/
+apps/mobile/android/
 
 # local environment
 .env

@@ -1,0 +1,24 @@
+{
+  "name": "@michikusa/mobile",
+  "private": true,
+  "version": "0.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "prebuild": "expo prebuild",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "expo": "~57.0.10",
+    "expo-dev-client": "~57.0.19",
+    "expo-image-manipulator": "~57.0.8",
+    "expo-media-library": "~57.0.5",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.2"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "5.9.2"
+  }
+}
