@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import sharp = require('sharp');
+import { sharp } from './sharp';
 import { Repository } from 'typeorm';
 import { Photo } from './photo.entity';
 
